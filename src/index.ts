@@ -105,7 +105,19 @@ function usePlainOutputFromArgv(argv: string[]): boolean {
   return hasPlain;
 }
 
-function formatRootOverview(command: Command): string {
+function commandPath(command: Command): string {
+  const segments: string[] = [];
+  let current: Command | null = command;
+
+  while (current) {
+    segments.push(current.name());
+    current = current.parent ?? null;
+  }
+
+  return segments.reverse().join(" ");
+}
+
+function formatCommandOverview(command: Command): string {
   const commands = command.commands;
   const width = commands.reduce((max, child) => Math.max(max, child.name().length), 0);
   const commandLines = commands.map((child) => {
@@ -116,7 +128,12 @@ function formatRootOverview(command: Command): string {
     return `  ${child.name().padEnd(width)}  ${description}`;
   });
 
-  return [`myriad v${command.version()}`, "", "Available commands:", ...commandLines, "", "Run `myriad <command> --help` for details."].join("\n");
+  const isRoot = command.parent == null;
+  const overviewTitle = isRoot ? `myriad v${command.version()}` : `${commandPath(command)} (myriad v${program.version()})`;
+  const listLabel = isRoot ? "Available commands:" : "Available subcommands:";
+  const helpTarget = isRoot ? "myriad <command>" : `${commandPath(command)} <subcommand>`;
+
+  return [overviewTitle, "", listLabel, ...commandLines, "", `Run \`${helpTarget} --help\` for details.`].join("\n");
 }
 
 const program = new Command();
@@ -150,7 +167,7 @@ program
   });
 
 program.action((_options, command) => {
-  console.log(formatRootOverview(command));
+  console.log(formatCommandOverview(command));
 });
 
 program
@@ -352,6 +369,12 @@ claimCommand
     const result = await createOperations(command).claimAll(options);
     output(command, result);
   });
+
+for (const commandGroup of [marketsCommand, usersCommand, walletCommand, swapCommand, tradeCommand, claimCommand]) {
+  commandGroup.action((_options, command) => {
+    console.log(formatCommandOverview(command));
+  });
+}
 
 async function main(): Promise<void> {
   await program.parseAsync(process.argv);

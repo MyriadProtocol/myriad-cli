@@ -3,6 +3,7 @@
 import process from "node:process";
 import { Command, CommanderError } from "commander";
 import dotenv from "dotenv";
+import { createRequire } from "node:module";
 import { inspect } from "node:util";
 import { loadRuntimeConfig, parseInteger, RuntimeConfig } from "./config.js";
 import {
@@ -23,6 +24,9 @@ import { startMyriadMcpServer } from "./mcp-server.js";
 import { setupWalletInteractive } from "./wallet-store.js";
 
 dotenv.config();
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json") as { version?: string };
+const cliVersion = packageJson.version ?? "0.0.0";
 
 type GlobalOptions = {
   plain?: boolean;
@@ -101,13 +105,27 @@ function usePlainOutputFromArgv(argv: string[]): boolean {
   return hasPlain;
 }
 
+function formatRootOverview(command: Command): string {
+  const commands = command.commands;
+  const width = commands.reduce((max, child) => Math.max(max, child.name().length), 0);
+  const commandLines = commands.map((child) => {
+    const description = child.description();
+    if (!description) {
+      return `  ${child.name()}`;
+    }
+    return `  ${child.name().padEnd(width)}  ${description}`;
+  });
+
+  return [`myriad v${command.version()}`, "", "Available commands:", ...commandLines, "", "Run `myriad <command> --help` for details."].join("\n");
+}
+
 const program = new Command();
 const plainOutput = usePlainOutputFromArgv(process.argv);
 
 program
   .name("myriad")
   .description("Myriad Markets CLI for AI agents (MYRIAD API v2 + wallet execution)")
-  .version("0.1.0")
+  .version(cliVersion)
   .option("--plain", "Output plain human-readable text instead of JSON")
   .option("--json", "Output JSON (default; compatibility flag)")
   .option("--api-base-url <url>", "MYRIAD API v2 base URL")
@@ -130,6 +148,10 @@ program
       }
     }
   });
+
+program.action((_options, command) => {
+  console.log(formatRootOverview(command));
+});
 
 program
   .command("mcp")

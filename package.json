@@ -1,6 +1,6 @@
 {
   "name": "@myriadmarkets/cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Myriad CLI - Let agents trade prediction markets on Myriad Markets",
   "license": "MIT",
   "type": "module",
@@ -14,6 +14,7 @@
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc -p tsconfig.json",
     "prepack": "npm run build",
+    "postinstall": "node scripts/postinstall-check.mjs",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "check": "tsc -p tsconfig.json --noEmit",
@@ -21,6 +22,7 @@
   },
   "files": [
     "dist/**",
+    "scripts/postinstall-check.mjs",
     "skills/**",
     "README.md",
     "LICENSE",

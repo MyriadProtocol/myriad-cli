@@ -20,7 +20,9 @@ Install (requires Node.js and npm):
 npm i -g @myriadmarkets/cli
 ```
 
-Set up a signer wallet (interactive create/import):
+If `myriad` is not found immediately after install, open a new terminal session. 
+
+Set up a signer wallet (create or import from private key or seedphrase, interactive only):
 
 ```bash
 myriad wallet setup

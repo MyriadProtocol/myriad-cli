@@ -1,0 +1,4 @@
+interface:
+  display_name: "Myriad Claims"
+  short_description: "Run winnings and voided claims"
+  default_prompt: "Use $myriad-claims to run winnings/voided/all claim workflows safely."

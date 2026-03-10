@@ -1,0 +1,4 @@
+interface:
+  display_name: "Myriad Trade Execution"
+  short_description: "Run safe Myriad buy and sell flows"
+  default_prompt: "Use $myriad-trade-execution to run safe preflight checks and execute buy/sell flows on Myriad."

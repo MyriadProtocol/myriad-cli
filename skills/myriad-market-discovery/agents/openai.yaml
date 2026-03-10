@@ -1,0 +1,4 @@
+interface:
+  display_name: "Myriad Market Discovery"
+  short_description: "Discover and filter Myriad markets"
+  default_prompt: "Use $myriad-market-discovery to find and filter tradable Myriad markets with actionable summaries."

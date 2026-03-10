@@ -1,0 +1,4 @@
+interface:
+  display_name: "Myriad MCP Orchestration"
+  short_description: "Operate Myriad MCP tool workflows"
+  default_prompt: "Use $myriad-mcp-orchestration to configure and operate the Myriad MCP server and tool-call sequences."

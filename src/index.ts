@@ -22,6 +22,7 @@ import {
 import { startMyriadMcpServer } from "./mcp-server.js";
 import { renderMarketShowTable, renderMarketsListTable, renderPlainTables, renderPortfolioTable } from "./output-format.js";
 import { setupWalletInteractive } from "./wallet-store.js";
+import { runSkillsInstall, formatInstallSummary } from "./skills-install.js";
 
 dotenv.config();
 const require = createRequire(import.meta.url);
@@ -380,7 +381,24 @@ claimCommand
     output(command, result);
   });
 
-for (const commandGroup of [marketsCommand, walletCommand, swapCommand, tradeCommand, claimCommand]) {
+const skillsCommand = program.command("skills").description("Manage agent platform skills");
+
+skillsCommand
+  .command("install")
+  .description("Install Myriad skills for Claude Code or OpenClaw")
+  .option("--target <platform>", "Target platform: claude | openclaw | all", "all")
+  .option("--force", "Overwrite existing skill files")
+  .action((options: { target: string; force?: boolean }) => {
+    const validTargets = ["claude", "openclaw", "all"];
+    if (!validTargets.includes(options.target)) {
+      console.error(`Invalid target "${options.target}". Use: ${validTargets.join(" | ")}`);
+      process.exit(1);
+    }
+    const results = runSkillsInstall(options.target, { force: options.force });
+    console.log(formatInstallSummary(results));
+  });
+
+for (const commandGroup of [marketsCommand, walletCommand, swapCommand, tradeCommand, claimCommand, skillsCommand]) {
   commandGroup.action((_options, command) => {
     console.log(formatCommandOverview(command));
   });

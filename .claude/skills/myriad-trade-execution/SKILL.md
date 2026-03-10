@@ -1,8 +1,8 @@
 ---
 name: myriad-trade-execution
-description: Execute Myriad buy/sell flows safely with preflight checks, dry-run quoting, allowance strategy, and BNB-chain stablecoin auto-swap awareness. Use when the task includes `trade buy`, `trade sell`, swap-aware execution planning, slippage/approval configuration, or trade error recovery.
+description: Execute Myriad buy/sell flows safely with preflight checks, dry-run quoting, allowance strategy, and BNB-chain stablecoin auto-swap awareness. Use when the task includes trade buy, trade sell, swap-aware execution planning, slippage/approval configuration, or trade error recovery.
 user-invocable: true
-metadata: {"openclaw":{"requires":{"bins":["myriad"],"env":["MYRIAD_PRIVATE_KEY"]},"primaryEnv":"MYRIAD_PRIVATE_KEY","emoji":"\uD83D\uDCC8","os":["darwin","linux","win32"]}}
+allowed-tools: Bash(myriad trade *), Bash(myriad swap *), Bash(myriad wallet balances *), Bash(myriad markets show *)
 ---
 
 # Myriad Trade Execution
@@ -17,7 +17,7 @@ Run this checklist before any write action.
 
 1. Validate wallet accessibility.
 - Confirm the signer exists via configured wallet, `--private-key`, or `MYRIAD_PRIVATE_KEY`.
-- If missing, route to `$myriad-wallet-ops`.
+- If missing, route to `/myriad-wallet-ops`.
 
 2. Validate balances.
 - Run `myriad wallet balances --json`.
@@ -79,9 +79,9 @@ myriad trade sell --market-id 164 --outcome-id 0 --shares 20 --json
 
 ## Boundaries
 
-- Do not run claim flows here; hand off to `$myriad-claims`.
-- Do not define MCP server orchestration here; hand off to `$myriad-mcp-orchestration`.
+- Do not run claim flows here; hand off to `/myriad-claims`.
+- Do not define MCP server orchestration here; hand off to `/myriad-mcp-orchestration`.
 
 ## Reference
 
-- Use [references/recipes.md](references/recipes.md) for buy/sell and swap-aware command recipes.
+- Use [references/recipes.md](../../skills/myriad-trade-execution/references/recipes.md) for buy/sell and swap-aware command recipes.

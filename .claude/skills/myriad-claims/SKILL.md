@@ -1,8 +1,8 @@
 ---
 name: myriad-claims
-description: Execute claim workflows on Myriad for winnings and voided outcomes. Use when tasks include `claim winnings`, `claim voided`, `claim all`, claim dry-runs, outcome-id handling for voided markets, or portfolio-based claim scanning and execution.
+description: Execute claim workflows on Myriad for winnings and voided outcomes. Use when tasks include claim winnings, claim voided, claim all, claim dry-runs, outcome-id handling for voided markets, or portfolio-based claim scanning and execution.
 user-invocable: true
-metadata: {"openclaw":{"requires":{"bins":["myriad"],"env":["MYRIAD_PRIVATE_KEY"]},"primaryEnv":"MYRIAD_PRIVATE_KEY","emoji":"\uD83C\uDFC6","os":["darwin","linux","win32"]}}
+allowed-tools: Bash(myriad claim *), Bash(myriad wallet balances *)
 ---
 
 # Myriad Claims
@@ -68,9 +68,9 @@ If `--wallet` is passed, it must match signer wallet context.
 
 ## Boundaries
 
-- Do not perform new market discovery logic here; hand off to `$myriad-market-discovery`.
-- Do not troubleshoot keychain storage internals here; hand off to `$myriad-wallet-ops`.
+- Do not perform new market discovery logic here; hand off to `/myriad-market-discovery`.
+- Do not troubleshoot keychain storage internals here; hand off to `/myriad-wallet-ops`.
 
 ## Reference
 
-- Use [references/recipes.md](references/recipes.md) for claim command variants and triage patterns.
+- Use [references/recipes.md](../../skills/myriad-claims/references/recipes.md) for claim command variants and triage patterns.

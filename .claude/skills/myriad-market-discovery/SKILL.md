@@ -2,7 +2,7 @@
 name: myriad-market-discovery
 description: Discover, filter, and inspect Myriad markets through CLI-first workflows. Use when the task is to list open/closed/resolved markets, drill into a market by id or slug, compare candidate markets, paginate/search/sort results, or produce JSON summaries before any trade decision.
 user-invocable: true
-metadata: {"openclaw":{"requires":{"bins":["myriad"]},"primaryEnv":"MYRIAD_API_KEY","emoji":"\uD83D\uDD0D","os":["darwin","linux","win32"]}}
+allowed-tools: Bash(myriad markets *)
 ---
 
 # Myriad Market Discovery
@@ -59,10 +59,10 @@ myriad markets show will-btc-close-above-120k-on-friday --json
 
 ## Boundaries
 
-- Do not place trades in this skill; hand off to `$myriad-trade-execution`.
-- Do not set up MCP in this skill; hand off to `$myriad-mcp-orchestration`.
-- Do not troubleshoot wallet/keychain storage in this skill; hand off to `$myriad-wallet-ops`.
+- Do not place trades in this skill; hand off to `/myriad-trade-execution`.
+- Do not set up MCP in this skill; hand off to `/myriad-mcp-orchestration`.
+- Do not troubleshoot wallet/keychain storage in this skill; hand off to `/myriad-wallet-ops`.
 
 ## Reference
 
-- Use [references/recipes.md](references/recipes.md) for command recipes and discovery troubleshooting.
+- Use [references/recipes.md](../../skills/myriad-market-discovery/references/recipes.md) for command recipes and discovery troubleshooting.

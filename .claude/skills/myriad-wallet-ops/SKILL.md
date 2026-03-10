@@ -1,8 +1,8 @@
 ---
 name: myriad-wallet-ops
-description: Set up and troubleshoot Myriad signer wallet operations, including keychain-backed encrypted storage and signer resolution precedence. Use when handling `wallet setup`, wallet loading failures, TTY/keychain issues, legacy wallet format errors, balance checks, or signer source precedence questions.
+description: Set up and troubleshoot Myriad signer wallet operations, including keychain-backed encrypted storage and signer resolution precedence. Use when handling wallet setup, wallet loading failures, TTY/keychain issues, legacy wallet format errors, balance checks, or signer source precedence questions.
 user-invocable: true
-metadata: {"openclaw":{"requires":{"bins":["myriad"]},"emoji":"\uD83D\uDD11","os":["darwin","linux","win32"]}}
+allowed-tools: Bash(myriad wallet *)
 ---
 
 # Myriad Wallet Ops
@@ -59,9 +59,9 @@ myriad wallet balances --address 0xWalletAddress --json
 
 ## Boundaries
 
-- Do not execute trade strategy in this skill; hand off to `$myriad-trade-execution`.
-- Do not orchestrate MCP tool chains here; hand off to `$myriad-mcp-orchestration`.
+- Do not execute trade strategy in this skill; hand off to `/myriad-trade-execution`.
+- Do not orchestrate MCP tool chains here; hand off to `/myriad-mcp-orchestration`.
 
 ## Reference
 
-- Use [references/recipes.md](references/recipes.md) for wallet setup and incident-response command patterns.
+- Use [references/recipes.md](../../skills/myriad-wallet-ops/references/recipes.md) for wallet setup and incident-response command patterns.

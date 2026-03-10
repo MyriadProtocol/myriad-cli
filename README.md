@@ -133,7 +133,7 @@ Safe rule for every agent:
 
 ## Command Map
 
-Core command groups: `markets` -> `trade` -> `claim` -> `wallet` -> `swap` -> `mcp`
+Core command groups: `markets` -> `trade` -> `claim` -> `wallet` -> `swap` -> `skills` -> `mcp`
 
 ## Skills
 
@@ -144,6 +144,49 @@ Core command groups: `markets` -> `trade` -> `claim` -> `wallet` -> `swap` -> `m
 | [myriad-claims](skills/myriad-claims/SKILL.md) | Winnings, voided claims, and claim-all workflows |
 | [myriad-wallet-ops](skills/myriad-wallet-ops/SKILL.md) | Wallet onboarding, signer resolution, keychain issues |
 | [myriad-mcp-orchestration](skills/myriad-mcp-orchestration/SKILL.md) | MCP sequencing, safety rules, and per-call override behavior |
+
+## Agent Platform Setup
+
+### Claude Code
+
+Install skills into your project:
+
+```bash
+myriad skills install --target claude
+```
+
+This copies skills to `.claude/skills/` in the current directory. You can then invoke them with `/myriad-market-discovery`, `/myriad-trade-execution`, etc.
+
+To use Myriad as an MCP server, add to your Claude Code MCP config:
+
+```json
+{
+  "mcpServers": {
+    "myriad": {
+      "command": "myriad",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### OpenClaw
+
+Install skills globally:
+
+```bash
+myriad skills install --target openclaw
+```
+
+This copies skills to `~/.openclaw/skills/` where OpenClaw auto-discovers them. Each skill requires the `myriad` binary on PATH.
+
+### Install Both
+
+```bash
+myriad skills install
+```
+
+Use `--force` to overwrite existing skill files.
 
 ## Defaults and Risk (Read Once)
 

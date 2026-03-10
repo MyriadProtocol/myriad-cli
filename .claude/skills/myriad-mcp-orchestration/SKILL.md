@@ -1,8 +1,8 @@
 ---
 name: myriad-mcp-orchestration
-description: Configure and operate Myriad as an MCP server over STDIO with safe tool-call orchestration. Use when tasks involve `myriad mcp`, MCP client configuration, tool sequencing, per-call API overrides (`apiBaseUrl`, `apiKey`), or safe handling of write-capable MCP tools.
+description: Configure and operate Myriad as an MCP server over STDIO with safe tool-call orchestration. Use when tasks involve myriad mcp, MCP client configuration, tool sequencing, per-call API overrides (apiBaseUrl, apiKey), or safe handling of write-capable MCP tools.
 user-invocable: true
-metadata: {"openclaw":{"requires":{"bins":["myriad"]},"primaryEnv":"MYRIAD_API_KEY","emoji":"\uD83D\uDD0C","os":["darwin","linux","win32"]}}
+allowed-tools: Bash(myriad mcp)
 ---
 
 # Myriad MCP Orchestration
@@ -71,9 +71,9 @@ myriad mcp
 
 ## Boundaries
 
-- Do not perform wallet keychain remediation here; hand off to `$myriad-wallet-ops`.
-- For detailed trading policy decisions, hand off to `$myriad-trade-execution`.
+- Do not perform wallet keychain remediation here; hand off to `/myriad-wallet-ops`.
+- For detailed trading policy decisions, hand off to `/myriad-trade-execution`.
 
 ## Reference
 
-- Use [references/recipes.md](references/recipes.md) for MCP-safe call ordering and payload patterns.
+- Use [references/recipes.md](../../skills/myriad-mcp-orchestration/references/recipes.md) for MCP-safe call ordering and payload patterns.

@@ -1,6 +1,6 @@
 {
   "name": "@myriadmarkets/cli",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Myriad CLI - Let agents trade prediction markets on Myriad Markets",
   "license": "MIT",
   "type": "module",
@@ -24,6 +24,7 @@
     "dist/**",
     "scripts/postinstall-check.mjs",
     "skills/**",
+    ".claude/skills/**",
     "README.md",
     "LICENSE",
     ".env.example"

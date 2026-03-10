@@ -12,7 +12,7 @@ Myriad CLI gives one interface for the full loop: discover markets, make decisio
 - **Claim** winnings.
 - **Automate** the full workflow through MCP tool orchestration.
 
-## Start in 90 Seconds
+## Start in seconds
 
 Install (requires Node.js and npm):
 
@@ -147,7 +147,14 @@ Core command groups: `markets` -> `trade` -> `claim` -> `wallet` -> `swap` -> `m
 
 ## Defaults and Risk (Read Once)
 
-- JSON is the default output mode.
+- Plain ASCII tables are the default output mode.
+- Pass `--json` to output JSON instead.
+- In `markets list --plain`, output columns are: `Title`, `Most likely outcome (with price)`, `Volume`, `Expires At`, `State`, `Market ID`.
+- In `markets show --plain`, output columns are: `Title`, `Outcome (Price)`, `Outcome (Price)`, `Volume`, `Expires At`, `Market ID`.
+- In `markets list --plain`, outcome prices and volumes are USD currency-formatted; `Expires At` is date-only, `HIT` for `>= 2100-01-01`, and `Perpetual` when perpetual is true.
+- In `portfolio --plain`, rows are filtered to unclaimed `open`/`voided`/`won` positions and shown as `Market`, `Outcome`, `Shares`, `Price`, `Current Value`, `Current ROI`, `Status`, `Market ID`, `Outcome ID`.
+- In `wallet deposit --plain`, output is instruction text lines (not an ASCII table).
+- If both `--json` and `--plain` are passed, `--json` takes precedence.
 - Default chain is BNB Chain (`chainId=56`).
 - Default API base URL is `https://api-v2.myriadprotocol.com/`.
 - Default slippage: trades `0.05`, stable swaps `0.005`.

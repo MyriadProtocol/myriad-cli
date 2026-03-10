@@ -69,3 +69,30 @@ test("wallet deposit keeps JSON output with --json", async () => {
   assert.equal(payload.assets.native.symbol, "BNB");
   assert.equal(payload.assets.collateral.symbol, "USDT");
 });
+
+test("wallet deposit prints instructions with --plain", async () => {
+  const result = await runCli(["--private-key", PRIVATE_KEY_A, "wallet", "deposit", "--plain"]);
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
+
+  const lines = result.stdout.trim().split(/\r?\n/);
+  assert.equal(lines.length, 3);
+  assert.equal(lines[0], "On BNB Chain:");
+  assert.match(lines[1], /^Send BNB to 0x[0-9a-fA-F]{40} for gas\.$/);
+  assert.match(
+    lines[2],
+    /^Send USDT \(token address 0x55d398326f99059fF775485246999027B3197955\) to 0x[0-9a-fA-F]{40} to trade\.$/
+  );
+});
+
+test("wallet deposit uses JSON when both --json and --plain are passed", async () => {
+  const result = await runCli(["--private-key", PRIVATE_KEY_A, "wallet", "deposit", "--json", "--plain"]);
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.chainId, 56);
+  assert.equal(payload.network, "BNB Chain");
+  assert.equal(payload.assets.native.symbol, "BNB");
+  assert.equal(payload.assets.collateral.symbol, "USDT");
+});

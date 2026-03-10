@@ -4,7 +4,6 @@ import process from "node:process";
 import { Command, CommanderError } from "commander";
 import dotenv from "dotenv";
 import { createRequire } from "node:module";
-import { inspect } from "node:util";
 import { loadRuntimeConfig, parseInteger, RuntimeConfig } from "./config.js";
 import {
   ClaimAllInput,
@@ -21,6 +20,7 @@ import {
   WalletBalancesInput
 } from "./operations.js";
 import { startMyriadMcpServer } from "./mcp-server.js";
+import { renderMarketShowTable, renderMarketsListTable, renderPlainTables, renderPortfolioTable } from "./output-format.js";
 import { setupWalletInteractive } from "./wallet-store.js";
 
 dotenv.config();
@@ -49,6 +49,9 @@ type MarketsShowOptions = {
   networkId?: string;
 };
 
+type RequestedOutputMode = "json" | "plain";
+type EffectiveOutputMode = "json" | "plain";
+
 function toRuntimeConfig(command: Command): RuntimeConfig {
   const options = command.optsWithGlobals<GlobalOptions>();
   return loadRuntimeConfig({
@@ -75,14 +78,22 @@ function createOperations(command: Command): MyriadOperations {
   });
 }
 
+function resolveRequestedOutputMode(options: GlobalOptions): RequestedOutputMode {
+  if (options.json) {
+    return "json";
+  }
+
+  return "plain";
+}
+
+function resolveEffectiveOutputMode(options: GlobalOptions): EffectiveOutputMode {
+  return resolveRequestedOutputMode(options) === "plain" ? "plain" : "json";
+}
+
 function output(command: Command, payload: unknown): void {
   const options = command.optsWithGlobals<GlobalOptions>();
-  if (options.plain) {
-    if (typeof payload === "string") {
-      console.log(payload);
-      return;
-    }
-    console.log(inspect(payload, { depth: null, colors: true, compact: false }));
+  if (resolveEffectiveOutputMode(options) === "plain") {
+    console.log(renderPlainTables(payload));
     return;
   }
   console.log(JSON.stringify(payload, null, 2));
@@ -96,13 +107,13 @@ function formatWalletDepositInstructions(payload: WalletDepositResult): string {
   ].join("\n");
 }
 
-function usePlainOutputFromArgv(argv: string[]): boolean {
-  const hasPlain = argv.includes("--plain");
+function resolveOutputModeFromArgv(argv: string[]): EffectiveOutputMode {
   const hasJson = argv.includes("--json");
   if (hasJson) {
-    return false;
+    return "json";
   }
-  return hasPlain;
+
+  return "plain";
 }
 
 function commandPath(command: Command): string {
@@ -137,14 +148,14 @@ function formatCommandOverview(command: Command): string {
 }
 
 const program = new Command();
-const plainOutput = usePlainOutputFromArgv(process.argv);
+const argvOutputMode = resolveOutputModeFromArgv(process.argv);
 
 program
   .name("myriad")
   .description("Myriad Markets CLI for AI agents (MYRIAD API v2 + wallet execution)")
   .version(cliVersion)
-  .option("--plain", "Output plain human-readable text instead of JSON")
-  .option("--json", "Output JSON (default; compatibility flag)")
+  .option("--plain", "Output ASCII tables (default)")
+  .option("--json", "Output JSON")
   .option("--api-base-url <url>", "MYRIAD API v2 base URL")
   .option("--api-key <key>", "MYRIAD API key (optional; higher rate limits and protected endpoints)")
   .option("--chain-id <id>", "EVM chain id (default: 56 / BNB Chain)")
@@ -160,7 +171,7 @@ program
   .exitOverride()
   .configureOutput({
     writeErr: (str) => {
-      if (plainOutput) {
+      if (argvOutputMode === "plain") {
         process.stderr.write(str);
       }
     }
@@ -195,6 +206,11 @@ marketsCommand
   .option("--limit <limit>", "Items per page", "20")
   .action(async (options: ListMarketsInput, command) => {
     const result = await createOperations(command).listMarkets(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderMarketsListTable(result));
+      return;
+    }
     output(command, result);
   });
 
@@ -205,23 +221,11 @@ marketsCommand
   .option("--network-id <id>", "Required when <market> is an id")
   .action(async (marketArgument: string, options: MarketsShowOptions, command) => {
     const result = await createOperations(command).showMarket(marketArgument, options);
-    output(command, result);
-  });
-
-const usersCommand = program.command("users").description("User-level endpoints from MYRIAD API v2");
-
-usersCommand
-  .command("portfolio")
-  .description("Get a user's aggregated portfolio")
-  .requiredOption("--address <address>", "Wallet address")
-  .option("--network-id <id>", "Filter by network id")
-  .option("--market-id <id>", "Filter by market id")
-  .option("--market-slug <slug>", "Filter by market slug")
-  .option("--token-address <address>", "Filter by token address")
-  .option("--page <page>", "Page number", "1")
-  .option("--limit <limit>", "Items per page", "20")
-  .action(async (options: { address: string } & PortfolioInput, command) => {
-    const result = await createOperations(command).usersPortfolio(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderMarketShowTable(result));
+      return;
+    }
     output(command, result);
   });
 
@@ -236,6 +240,11 @@ program
   .option("--limit <limit>", "Items per page", "20")
   .action(async (options: PortfolioInput, command) => {
     const result = await createOperations(command).portfolio(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderPortfolioTable(result));
+      return;
+    }
     output(command, result);
   });
 
@@ -260,10 +269,11 @@ walletCommand
   .action(async (options: WalletDepositInput, command) => {
     const result = await createOperations(command).walletDeposit(options);
     const globalOptions = command.optsWithGlobals() as GlobalOptions;
-    if (globalOptions.json) {
+    if (resolveEffectiveOutputMode(globalOptions) === "json") {
       output(command, result);
       return;
     }
+
     console.log(formatWalletDepositInstructions(result));
   });
 
@@ -370,7 +380,7 @@ claimCommand
     output(command, result);
   });
 
-for (const commandGroup of [marketsCommand, usersCommand, walletCommand, swapCommand, tradeCommand, claimCommand]) {
+for (const commandGroup of [marketsCommand, walletCommand, swapCommand, tradeCommand, claimCommand]) {
   commandGroup.action((_options, command) => {
     console.log(formatCommandOverview(command));
   });
@@ -392,13 +402,13 @@ main().catch((error) => {
     if (error.code === "commander.helpDisplayed" || error.code === "commander.version") {
       process.exit(0);
     }
-    if (plainOutput) {
+    if (argvOutputMode === "plain") {
       process.exit(error.exitCode ?? 1);
     }
   }
 
   const message = error instanceof Error ? error.message : String(error);
-  if (plainOutput) {
+  if (argvOutputMode === "plain") {
     console.error(message);
   } else {
     console.error(

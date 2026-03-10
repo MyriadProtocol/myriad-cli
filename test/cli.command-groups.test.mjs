@@ -48,7 +48,6 @@ function escapeRegExp(value) {
 
 const commandCases = [
   { args: ["markets"], commandPath: "myriad markets", subcommands: ["list", "show"] },
-  { args: ["users"], commandPath: "myriad users", subcommands: ["portfolio"] },
   { args: ["wallet"], commandPath: "myriad wallet", subcommands: ["setup", "deposit", "balances"] },
   { args: ["swap"], commandPath: "myriad swap", subcommands: ["stable"] },
   { args: ["trade"], commandPath: "myriad trade", subcommands: ["buy", "sell"] },

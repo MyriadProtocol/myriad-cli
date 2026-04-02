@@ -2,15 +2,20 @@ import {
   ApiListResponse,
   ClaimRequest,
   ClaimResponse,
+  ClobOrder,
+  ClobOrderRecord,
   Market,
+  OrderbookResponse,
+  OrderbookTrade,
   PortfolioMarketItem,
   PortfolioPosition,
+  PositionCalldataResponse,
   QuoteRequest,
   QuoteResponse
 } from "./types.js";
 
 type RequestOptions = {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "DELETE";
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
 };
@@ -121,15 +126,27 @@ export class MyriadApiClient {
     };
   }
 
-  async getMarketById(marketId: number, networkId: number): Promise<Market> {
+  async getMarketById(
+    marketId: number,
+    networkId: number,
+    query: Record<string, string | number | boolean | undefined> = {}
+  ): Promise<Market> {
     const response = await this.request<Market | { data: Market }>(`markets/${marketId}`, {
-      query: { network_id: networkId }
+      query: {
+        network_id: networkId,
+        ...query
+      }
     });
     return unwrapPayload<Market>(response);
   }
 
-  async getMarketBySlug(slug: string): Promise<Market> {
-    const response = await this.request<Market | { data: Market }>(`markets/${slug}`);
+  async getMarketBySlug(
+    slug: string,
+    query: Record<string, string | number | boolean | undefined> = {}
+  ): Promise<Market> {
+    const response = await this.request<Market | { data: Market }>(`markets/${slug}`, {
+      query
+    });
     return unwrapPayload<Market>(response);
   }
 
@@ -187,5 +204,118 @@ export class MyriadApiClient {
       data: response.data ?? [],
       pagination: response.pagination
     };
+  }
+
+  async getMarketOrderbook(
+    marketId: number,
+    query: Record<string, string | number | boolean | undefined> = {}
+  ): Promise<OrderbookResponse> {
+    const response = await this.request<OrderbookResponse | { data: OrderbookResponse }>(`markets/${marketId}/orderbook`, {
+      query
+    });
+    return unwrapPayload<OrderbookResponse>(response);
+  }
+
+  async getMarketTrades(
+    marketId: number,
+    query: Record<string, string | number | boolean | undefined> = {}
+  ): Promise<ApiListResponse<OrderbookTrade>> {
+    const response = await this.request<
+      { data?: OrderbookTrade[]; pagination?: ApiListResponse<OrderbookTrade>["pagination"] } | OrderbookTrade[]
+    >(`markets/${marketId}/trades`, {
+      query
+    });
+
+    if (Array.isArray(response)) {
+      return { data: response };
+    }
+
+    return {
+      data: response.data ?? [],
+      pagination: response.pagination
+    };
+  }
+
+  async createOrder(request: {
+    order: ClobOrder;
+    signature: string;
+    network_id?: number;
+    time_in_force?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("orders", {
+      method: "POST",
+      body: request
+    });
+  }
+
+  async listOrders(query: Record<string, string | number | boolean | undefined> = {}): Promise<ApiListResponse<ClobOrderRecord>> {
+    const response = await this.request<
+      { data?: ClobOrderRecord[]; pagination?: ApiListResponse<ClobOrderRecord>["pagination"] } | ClobOrderRecord[]
+    >("orders", {
+      query
+    });
+
+    if (Array.isArray(response)) {
+      return { data: response };
+    }
+
+    return {
+      data: response.data ?? [],
+      pagination: response.pagination
+    };
+  }
+
+  async getOrder(orderHash: string): Promise<ClobOrderRecord> {
+    const response = await this.request<ClobOrderRecord | { data: ClobOrderRecord }>(`orders/${orderHash}`);
+    return unwrapPayload<ClobOrderRecord>(response);
+  }
+
+  async cancelOrder(
+    orderHash: string,
+    request: {
+      order: ClobOrder;
+      signature: string;
+      network_id?: number;
+    }
+  ): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>(`orders/${orderHash}`, {
+      method: "DELETE",
+      body: request
+    });
+  }
+
+  async splitPosition(request: { market_id: number; amount: string; network_id?: number }): Promise<PositionCalldataResponse> {
+    const response = await this.request<PositionCalldataResponse | { data: PositionCalldataResponse }>("positions/split", {
+      method: "POST",
+      body: request
+    });
+    return unwrapPayload<PositionCalldataResponse>(response);
+  }
+
+  async mergePosition(request: { market_id: number; amount: string; network_id?: number }): Promise<PositionCalldataResponse> {
+    const response = await this.request<PositionCalldataResponse | { data: PositionCalldataResponse }>("positions/merge", {
+      method: "POST",
+      body: request
+    });
+    return unwrapPayload<PositionCalldataResponse>(response);
+  }
+
+  async redeemPosition(request: { market_id: number; network_id?: number }): Promise<PositionCalldataResponse> {
+    const response = await this.request<PositionCalldataResponse | { data: PositionCalldataResponse }>("positions/redeem", {
+      method: "POST",
+      body: request
+    });
+    return unwrapPayload<PositionCalldataResponse>(response);
+  }
+
+  async redeemVoidedPosition(request: { market_id: number; network_id?: number }): Promise<PositionCalldataResponse> {
+    const response = await this.request<PositionCalldataResponse | { data: PositionCalldataResponse }>(
+      "positions/redeem-voided",
+      {
+        method: "POST",
+        body: request
+      }
+    );
+    return unwrapPayload<PositionCalldataResponse>(response);
   }
 }

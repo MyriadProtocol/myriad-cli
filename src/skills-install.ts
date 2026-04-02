@@ -82,9 +82,32 @@ export function installOpenClawSkills(targetDir: string, options: InstallOptions
   return { ok: true, target: "openclaw", destination: destSkills, filesWritten: written, filesSkipped: skipped };
 }
 
+export function installCodexSkills(targetDir: string, options: InstallOptions): InstallResult {
+  const sourceSkills = path.join(PACKAGE_ROOT, "skills");
+  const destSkills = path.join(targetDir, "skills");
+
+  if (!fs.existsSync(sourceSkills)) {
+    return { ok: false, target: "codex", destination: destSkills, filesWritten: [], filesSkipped: [] };
+  }
+
+  const { written, skipped } = copyTree(sourceSkills, destSkills, options);
+
+  return { ok: true, target: "codex", destination: destSkills, filesWritten: written, filesSkipped: skipped };
+}
+
 function openClawSkillsDir(): string {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
   return path.join(home, ".openclaw", "skills");
+}
+
+function codexSkillsHome(): string {
+  const configuredHome = process.env.CODEX_HOME?.trim();
+  if (configuredHome) {
+    return configuredHome;
+  }
+
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  return path.join(home, ".codex");
 }
 
 export function runSkillsInstall(
@@ -99,6 +122,10 @@ export function runSkillsInstall(
 
   if (target === "openclaw" || target === "all") {
     results.push(installOpenClawSkills(openClawSkillsDir(), options));
+  }
+
+  if (target === "codex" || target === "all") {
+    results.push(installCodexSkills(codexSkillsHome(), options));
   }
 
   return results;

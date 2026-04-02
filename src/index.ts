@@ -6,11 +6,22 @@ import dotenv from "dotenv";
 import { createRequire } from "node:module";
 import { loadRuntimeConfig, parseInteger, RuntimeConfig } from "./config.js";
 import {
+  OrderWaitProgressEvent,
   ClaimAllInput,
   ClaimInput,
   ClaimVoidedInput,
   ListMarketsInput,
   MyriadOperations,
+  ObLimitOrderInput,
+  ObMarketBookInput,
+  ObMarketOrderInput,
+  ObMarketsListInput,
+  ObMarketTradesInput,
+  ObOrderCancelAllInput,
+  ObOrdersListInput,
+  ObPositionActionInput,
+  ObPositionRedeemInput,
+  ObPositionsListInput,
   PortfolioInput,
   StableSwapInput,
   TradeBuyInput,
@@ -20,7 +31,16 @@ import {
   WalletBalancesInput
 } from "./operations.js";
 import { startMyriadMcpServer } from "./mcp-server.js";
-import { renderMarketShowTable, renderMarketsListTable, renderPlainTables, renderPortfolioTable } from "./output-format.js";
+import {
+  renderMarketShowTable,
+  renderMarketsListTable,
+  renderObOrderShowTable,
+  renderObOrdersListTable,
+  renderObOrderSubmission,
+  renderOrderbookLadder,
+  renderPlainTables,
+  renderPortfolioTable
+} from "./output-format.js";
 import { setupWalletInteractive } from "./wallet-store.js";
 import { runSkillsInstall, formatInstallSummary } from "./skills-install.js";
 
@@ -43,6 +63,11 @@ type GlobalOptions = {
   usdtTokenAddress?: string;
   usd1TokenAddress?: string;
   pancakeRouterV2Address?: string;
+  obExchangeAddress?: string;
+  obConditionalTokens?: string;
+  obManager?: string;
+  obNegRiskAdapter?: string;
+  wrappedCollateral?: string;
   allowance?: string;
 };
 
@@ -50,33 +75,61 @@ type MarketsShowOptions = {
   networkId?: string;
 };
 
+type ObMarketBookCommandOptions = ObMarketBookInput & {
+  render?: boolean;
+  levels?: string | number;
+};
+
 type RequestedOutputMode = "json" | "plain";
 type EffectiveOutputMode = "json" | "plain";
 
-function toRuntimeConfig(command: Command): RuntimeConfig {
+function toRuntimeConfig(command: Command, defaults: Partial<RuntimeConfig> = {}): RuntimeConfig {
   const options = command.optsWithGlobals<GlobalOptions>();
   return loadRuntimeConfig({
-    apiBaseUrl: options.apiBaseUrl,
-    apiKey: options.apiKey,
-    allowance: options.allowance,
-    chainId: options.chainId ? parseInteger(options.chainId, "chain-id") : undefined,
-    rpcUrl: options.rpcUrl,
+    ...defaults,
+    apiBaseUrl: options.apiBaseUrl ?? defaults.apiBaseUrl,
+    apiKey: options.apiKey ?? defaults.apiKey,
+    allowance: options.allowance ?? defaults.allowance,
+    chainId: options.chainId ? parseInteger(options.chainId, "chain-id") : defaults.chainId,
+    rpcUrl: options.rpcUrl ?? defaults.rpcUrl,
     privateKey: options.privateKey,
     predictionMarketAddress: options.predictionMarketAddress,
     predictionMarketQuerierAddress: options.predictionMarketQuerierAddress,
     collateralTokenAddress: options.collateralTokenAddress,
     usdtTokenAddress: options.usdtTokenAddress,
     usd1TokenAddress: options.usd1TokenAddress,
-    pancakeRouterV2Address: options.pancakeRouterV2Address
+    pancakeRouterV2Address: options.pancakeRouterV2Address,
+    obExchangeAddress: options.obExchangeAddress,
+    obConditionalTokens: options.obConditionalTokens,
+    obManager: options.obManager,
+    obNegRiskAdapter: options.obNegRiskAdapter,
+    wrappedCollateral: options.wrappedCollateral
   });
 }
 
-function createOperations(command: Command): MyriadOperations {
+function createOperations(command: Command, defaults: Partial<RuntimeConfig> = {}): MyriadOperations {
   const options = command.optsWithGlobals<GlobalOptions>();
+  const outputMode = resolveEffectiveOutputMode(options);
+  const progressReporter =
+    outputMode === "plain" && Boolean(process.stdout?.isTTY)
+      ? (event: OrderWaitProgressEvent) => {
+          if (event.type === "posted") {
+            console.log(`Order posted with ${event.timeInForce}`);
+            return;
+          }
+
+          console.log(`Waiting for matching response (${event.remainingSeconds} more seconds)`);
+        }
+      : undefined;
   return new MyriadOperations({
-    runtime: toRuntimeConfig(command),
-    globalAllowance: options.allowance
+    runtime: toRuntimeConfig(command, defaults),
+    globalAllowance: options.allowance,
+    orderWaitProgressReporter: progressReporter
   });
+}
+
+function createOrderbookOperations(command: Command): MyriadOperations {
+  return createOperations(command);
 }
 
 function resolveRequestedOutputMode(options: GlobalOptions): RequestedOutputMode {
@@ -168,6 +221,11 @@ program
   .option("--usdt-token-address <address>", "USDT token address (used for BNB stable swaps)")
   .option("--usd1-token-address <address>", "USD1 token address (used for BNB stable swaps)")
   .option("--pancake-router-v2-address <address>", "PancakeSwap V2 router address")
+  .option("--ob-exchange-address <address>", "Orderbook exchange contract address")
+  .option("--ob-conditional-tokens <address>", "Orderbook ConditionalTokens contract address")
+  .option("--ob-manager <address>", "Orderbook market manager contract address")
+  .option("--ob-neg-risk-adapter <address>", "Orderbook NegRisk adapter contract address")
+  .option("--wrapped-collateral <address>", "Orderbook wrapped collateral token address")
   .option("--allowance <amount|UNLIMITED>", "Global ERC20 allowance override for approvals")
   .exitOverride()
   .configureOutput({
@@ -341,6 +399,307 @@ tradeCommand
     output(command, result);
   });
 
+const obCommand = program.command("ob").description("Myriad Order Book tools on BNB Chain");
+
+const obMarketsCommand = obCommand.command("markets").description("Discover orderbook markets and market data");
+
+obMarketsCommand
+  .command("list")
+  .description("List orderbook markets")
+  .option("--state <state>", "Market state", "open")
+  .option("--keyword <text>", "Keyword search")
+  .option("--sort <field>", "Sort field", "volume_24h")
+  .option("--order <order>", "Sort order: asc | desc", "desc")
+  .option("--page <page>", "Page number", "1")
+  .option("--limit <limit>", "Items per page", "20")
+  .action(async (options: ObMarketsListInput, command) => {
+    const result = await createOrderbookOperations(command).obMarketsList(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderMarketsListTable(result));
+      return;
+    }
+    output(command, result);
+  });
+
+obMarketsCommand
+  .command("show")
+  .description("Show an orderbook market by id or slug")
+  .argument("<market>", "Market id or slug")
+  .action(async (marketArgument: string, _options, command) => {
+    const result = await createOrderbookOperations(command).obMarketsShow(marketArgument);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderMarketShowTable(result));
+      return;
+    }
+    output(command, result);
+  });
+
+obMarketsCommand
+  .command("orderbook")
+  .description("Show aggregated bids and asks for an orderbook market outcome")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .option("--outcome-id <id>", "Outcome id (0=yes, 1=no)", "0")
+  .option("--render", "Render a terminal orderbook ladder")
+  .option("--levels <n>", "Visible levels per side when rendering", "10")
+  .action(async (options: ObMarketBookCommandOptions, command) => {
+    const operations = createOrderbookOperations(command);
+    const result = await operations.obMarketOrderbook(options);
+    if (options.render === true) {
+      const visibleLevels = parseInteger(String(options.levels ?? "10"), "levels");
+      if (visibleLevels <= 0) {
+        throw new Error("levels must be a positive integer.");
+      }
+      const tradesResult = await operations.obMarketTrades({
+        marketId: options.marketId,
+        marketSlug: options.marketSlug,
+        outcomeId: options.outcomeId,
+        page: 1,
+        limit: 1
+      });
+      const latestTrade =
+        typeof tradesResult === "object" &&
+        tradesResult !== null &&
+        "data" in tradesResult &&
+        Array.isArray((tradesResult as { data?: unknown }).data)
+          ? ((tradesResult as { data: Array<Record<string, unknown>> }).data[0] ?? null)
+          : null;
+
+      console.log(
+        renderOrderbookLadder(
+          {
+            ...(result as Record<string, unknown>),
+            lastPrice: latestTrade?.price
+          },
+          { levels: visibleLevels }
+        )
+      );
+      return;
+    }
+    output(command, result);
+  });
+
+obMarketsCommand
+  .command("trades")
+  .description("Show recent orderbook trades for a market")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .option("--outcome-id <id>", "Outcome id (optional)")
+  .option("--page <page>", "Page number", "1")
+  .option("--limit <limit>", "Items per page", "50")
+  .action(async (options: ObMarketTradesInput, command) => {
+    const result = await createOrderbookOperations(command).obMarketTrades(options);
+    output(command, result);
+  });
+
+const obLimitCommand = obCommand.command("limit").description("Place orderbook limit orders");
+
+obLimitCommand
+  .command("buy")
+  .description("Place a limit buy order")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .requiredOption("--outcome-id <id>", "Outcome id")
+  .requiredOption("--price <price>", "Limit price as a decimal in [0,1]")
+  .requiredOption("--shares <amount>", "Shares to buy")
+  .option("--time-in-force <tif>", "Time in force: GTC | GTD | FOK | FAK", "GTC")
+  .option("--wait-ms <ms>", "Wait for order status updates after submission (0 disables polling)")
+  .option("--expiration <unix>", "Required when --time-in-force is GTD")
+  .option("--min-fill-shares <amount>", "Minimum fill size in shares")
+  .option("--allowance <amount|UNLIMITED>", "Allowance override for collateral approval")
+  .option("--skip-approval", "Skip allowance checks")
+  .option("--dry-run", "Build and sign the order without posting it")
+  .action(async (options: ObLimitOrderInput, command) => {
+    const result = await createOrderbookOperations(command).obLimitBuy(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderObOrderSubmission(result));
+      return;
+    }
+    output(command, result);
+  });
+
+obLimitCommand
+  .command("sell")
+  .description("Place a limit sell order")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .requiredOption("--outcome-id <id>", "Outcome id")
+  .requiredOption("--price <price>", "Limit price as a decimal in [0,1]")
+  .requiredOption("--shares <amount>", "Shares to sell")
+  .option("--time-in-force <tif>", "Time in force: GTC | GTD | FOK | FAK", "GTC")
+  .option("--wait-ms <ms>", "Wait for order status updates after submission (0 disables polling)")
+  .option("--expiration <unix>", "Required when --time-in-force is GTD")
+  .option("--min-fill-shares <amount>", "Minimum fill size in shares")
+  .option("--skip-approval", "Skip ERC1155 approval check")
+  .option("--dry-run", "Build and sign the order without posting it")
+  .action(async (options: ObLimitOrderInput, command) => {
+    const result = await createOrderbookOperations(command).obLimitSell(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderObOrderSubmission(result));
+      return;
+    }
+    output(command, result);
+  });
+
+const obMarketCommand = obCommand.command("market").description("Place synthesized orderbook market orders");
+
+obMarketCommand
+  .command("buy")
+  .description("Place a market buy order derived from the current orderbook")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .requiredOption("--outcome-id <id>", "Outcome id")
+  .option("--shares <amount>", "Shares to buy")
+  .option("--value <amount>", "Best-effort collateral spend target")
+  .option("--time-in-force <tif>", "Time in force: FAK | FOK", "FAK")
+  .option("--wait-ms <ms>", "Wait for order status updates after submission (0 disables polling)")
+  .option("--allowance <amount|UNLIMITED>", "Allowance override for collateral approval")
+  .option("--skip-approval", "Skip allowance checks")
+  .option("--dry-run", "Build and sign the order without posting it")
+  .action(async (options: ObMarketOrderInput, command) => {
+    const result = await createOrderbookOperations(command).obMarketBuy(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderObOrderSubmission(result));
+      return;
+    }
+    output(command, result);
+  });
+
+obMarketCommand
+  .command("sell")
+  .description("Place a market sell order derived from the current orderbook")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .requiredOption("--outcome-id <id>", "Outcome id")
+  .option("--shares <amount>", "Shares to sell")
+  .option("--value <amount>", "Best-effort proceeds target")
+  .option("--time-in-force <tif>", "Time in force: FAK | FOK", "FAK")
+  .option("--wait-ms <ms>", "Wait for order status updates after submission (0 disables polling)")
+  .option("--skip-approval", "Skip ERC1155 approval check")
+  .option("--dry-run", "Build and sign the order without posting it")
+  .action(async (options: ObMarketOrderInput, command) => {
+    const result = await createOrderbookOperations(command).obMarketSell(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderObOrderSubmission(result));
+      return;
+    }
+    output(command, result);
+  });
+
+const obOrdersCommand = obCommand.command("orders").description("Inspect and manage orderbook orders");
+
+obOrdersCommand
+  .command("list")
+  .description("List orderbook orders")
+  .option("--trader <address>", "Trader wallet address (defaults to configured wallet)")
+  .option("--market-id <id>", "Filter by market id")
+  .option("--status <status>", "Filter by status")
+  .option("--offset <offset>", "Pagination offset", "0")
+  .option("--limit <limit>", "Items per page", "50")
+  .action(async (options: ObOrdersListInput, command) => {
+    const result = await createOrderbookOperations(command).obOrdersList(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderObOrdersListTable(result));
+      return;
+    }
+    output(command, result);
+  });
+
+obOrdersCommand
+  .command("show")
+  .description("Show a single orderbook order")
+  .argument("<orderHash>", "Order hash")
+  .action(async (orderHash: string, _options, command) => {
+    const result = await createOrderbookOperations(command).obOrdersShow({ orderHash });
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderObOrderShowTable(result));
+      return;
+    }
+    output(command, result);
+  });
+
+obOrdersCommand
+  .command("cancel")
+  .description("Cancel an orderbook order, or use 'all' to cancel all open orders on a market")
+  .argument("<orderHashOrAll>", "Order hash, or 'all' to cancel all open orders on a market")
+  .option("--market-id <id>", "Market id (required with 'all')")
+  .option("--market-slug <slug>", "Market slug (required with 'all')")
+  .option("--dry-run", "Build the cancel request without sending it")
+  .action(async (orderHashOrAll: string, options: ObOrderCancelAllInput, command) => {
+    const operations = createOrderbookOperations(command);
+    const result =
+      orderHashOrAll.trim().toLowerCase() === "all"
+        ? await operations.obOrdersCancelAll(options)
+        : await operations.obOrdersCancel({ orderHash: orderHashOrAll, dryRun: options.dryRun });
+    output(command, result);
+  });
+
+const obPositionsCommand = obCommand.command("positions").description("Consult and manage orderbook positions");
+
+obPositionsCommand
+  .command("list")
+  .description("List the orderbook portfolio for a wallet")
+  .option("--address <address>", "Wallet address (defaults to configured wallet)")
+  .option("--market-id <id>", "Filter by market id")
+  .option("--market-slug <slug>", "Filter by market slug")
+  .option("--token-address <address>", "Filter by token address")
+  .option("--page <page>", "Page number", "1")
+  .option("--limit <limit>", "Items per page", "20")
+  .action(async (options: ObPositionsListInput, command) => {
+    const result = await createOrderbookOperations(command).obPositionsList(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderPortfolioTable(result));
+      return;
+    }
+    output(command, result);
+  });
+
+obPositionsCommand
+  .command("split")
+  .description("Split collateral into YES + NO shares")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .requiredOption("--amount <amount>", "Collateral amount to split")
+  .option("--allowance <amount|UNLIMITED>", "Allowance override for collateral approval")
+  .option("--skip-approval", "Skip allowance checks")
+  .option("--dry-run", "Build calldata without sending it")
+  .action(async (options: ObPositionActionInput, command) => {
+    const result = await createOrderbookOperations(command).obPositionsSplit(options);
+    output(command, result);
+  });
+
+obPositionsCommand
+  .command("merge")
+  .description("Merge YES + NO shares back into collateral")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .requiredOption("--amount <amount>", "Amount to merge")
+  .option("--dry-run", "Build calldata without sending it")
+  .action(async (options: ObPositionActionInput, command) => {
+    const result = await createOrderbookOperations(command).obPositionsMerge(options);
+    output(command, result);
+  });
+
+obPositionsCommand
+  .command("redeem")
+  .description("Redeem a resolved or voided market position")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .option("--dry-run", "Build calldata without sending it")
+  .action(async (options: ObPositionRedeemInput, command) => {
+    const result = await createOrderbookOperations(command).obPositionsRedeem(options);
+    output(command, result);
+  });
+
 const claimCommand = program.command("claim").description("Claim market settlements");
 
 claimCommand
@@ -385,11 +744,11 @@ const skillsCommand = program.command("skills").description("Manage agent platfo
 
 skillsCommand
   .command("install")
-  .description("Install Myriad skills for Claude Code or OpenClaw")
-  .option("--target <platform>", "Target platform: claude | openclaw | all", "all")
+  .description("Install Myriad skills for Claude Code, OpenClaw, or Codex")
+  .option("--target <platform>", "Target platform: claude | openclaw | codex | all", "all")
   .option("--force", "Overwrite existing skill files")
   .action((options: { target: string; force?: boolean }) => {
-    const validTargets = ["claude", "openclaw", "all"];
+    const validTargets = ["claude", "openclaw", "codex", "all"];
     if (!validTargets.includes(options.target)) {
       console.error(`Invalid target "${options.target}". Use: ${validTargets.join(" | ")}`);
       process.exit(1);
@@ -398,7 +757,20 @@ skillsCommand
     console.log(formatInstallSummary(results));
   });
 
-for (const commandGroup of [marketsCommand, walletCommand, swapCommand, tradeCommand, claimCommand, skillsCommand]) {
+for (const commandGroup of [
+  marketsCommand,
+  walletCommand,
+  swapCommand,
+  tradeCommand,
+  obCommand,
+  obMarketsCommand,
+  obLimitCommand,
+  obMarketCommand,
+  obOrdersCommand,
+  obPositionsCommand,
+  claimCommand,
+  skillsCommand
+]) {
   commandGroup.action((_options, command) => {
     console.log(formatCommandOverview(command));
   });

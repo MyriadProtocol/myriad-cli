@@ -1,6 +1,6 @@
 ---
 name: myriad-trade-execution
-description: Execute Myriad buy/sell flows safely with preflight checks, dry-run quoting, allowance strategy, and BNB-chain stablecoin auto-swap awareness. Use when the task includes `trade buy`, `trade sell`, swap-aware execution planning, slippage/approval configuration, or trade error recovery.
+description: Execute Myriad AMM `trade buy` and `trade sell` flows safely with preflight checks, dry-run quoting, allowance strategy, and BNB-chain stablecoin auto-swap awareness. Use when the task includes `myriad trade ...`, swap-aware execution planning, slippage/approval configuration, or AMM trade error recovery.
 user-invocable: true
 metadata: {"openclaw":{"requires":{"bins":["myriad"],"env":["MYRIAD_PRIVATE_KEY"]},"primaryEnv":"MYRIAD_PRIVATE_KEY","emoji":"\uD83D\uDCC8","os":["darwin","linux","win32"]}}
 ---
@@ -9,7 +9,9 @@ metadata: {"openclaw":{"requires":{"bins":["myriad"],"env":["MYRIAD_PRIVATE_KEY"
 
 ## Overview
 
-Use this skill to convert a trade intent into a safe, executable command sequence. Enforce preflight checks before signing transactions.
+Use this skill to convert an AMM trade intent into a safe, executable command sequence. Enforce preflight checks before signing transactions.
+
+This skill does not own `myriad ob ...` workflows. For order book discovery, depth inspection, limit orders, market orders, or position management, hand off to `$myriad-orderbook`.
 
 ## Preflight Checklist
 
@@ -79,6 +81,7 @@ myriad trade sell --market-id 164 --outcome-id 0 --shares 20 --json
 
 ## Boundaries
 
+- Do not use this skill for `myriad ob ...`; hand off to `$myriad-orderbook`.
 - Do not run claim flows here; hand off to `$myriad-claims`.
 - Do not define MCP server orchestration here; hand off to `$myriad-mcp-orchestration`.
 

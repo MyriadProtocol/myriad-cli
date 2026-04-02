@@ -47,34 +47,6 @@ async function writeGlobalConfig(xdgRoot, payload) {
   await writeFile(path.join(configDir, "config.json"), JSON.stringify(payload, null, 2));
 }
 
-function runMcpProcess(envOverrides = {}, cwd = repoRoot) {
-  const distEntry = path.join(repoRoot, "dist/index.js");
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [distEntry, "mcp"], {
-      cwd,
-      env: baseMcpEnv(envOverrides)
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({
-        code,
-        stdout,
-        stderr
-      });
-    });
-  });
-}
-
 async function withMcpClient(t, envOverrides, callback, cwd = repoRoot) {
   const distEntry = path.join(repoRoot, "dist/index.js");
   const transport = new StdioClientTransport({
@@ -119,21 +91,27 @@ test("`myriad mcp` starts over stdio and lists tools", async (t) => {
   });
 });
 
-test("`myriad mcp` loads global config file defaults on startup", async () => {
+test("`myriad mcp` starts even when the global config only sets an unknown chain id", async (t) => {
   await withTempDir("myriad-mcp-config-test-", async (xdgRoot) => {
     await writeGlobalConfig(xdgRoot, {
-      chainId: 999
+      chainId: 999,
+      rpcUrl: "https://rpc.unknown-chain.example"
     });
 
-    const result = await runMcpProcess(
+    await withMcpClient(
+      t,
       {
         XDG_CONFIG_HOME: xdgRoot
       },
+      async (client) => {
+        const tools = await client.listTools();
+        assert.deepEqual(
+          tools.tools.map((tool) => tool.name).sort(),
+          [...MCP_TOOL_NAMES].sort()
+        );
+      },
       xdgRoot
     );
-
-    assert.equal(result.code, 1);
-    assert.match(result.stderr, /Missing deployment config for chain 999/);
   });
 });
 

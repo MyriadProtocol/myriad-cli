@@ -39,6 +39,10 @@ myriad mcp
 - `swap_stable`
 - `trade_buy`, `trade_sell`
 - `claim_winnings`, `claim_voided`, `claim_all`
+- `ob_markets_list`, `ob_markets_show`, `ob_markets_orderbook`, `ob_markets_trades`
+- `ob_limit_buy`, `ob_limit_sell`, `ob_market_buy`, `ob_market_sell`
+- `ob_orders_list`, `ob_orders_show`, `ob_orders_cancel`, `ob_orders_cancel_all`
+- `ob_positions_list`, `ob_positions_split`, `ob_positions_merge`, `ob_positions_redeem`
 
 ## Safe Tool Orchestration
 
@@ -53,6 +57,23 @@ myriad mcp
 4. Keep signer control server scoped.
 - Never assume private key override is allowed per tool call.
 - Only `apiBaseUrl` and `apiKey` are valid per-call API overrides.
+
+## Safe Sequences
+
+For AMM workflows:
+
+1. `markets_list` or `markets_show`
+2. `wallet_balances` and `portfolio`
+3. `trade_buy` or `trade_sell` with `dryRun=true`
+4. Repeat the validated write call with `dryRun=false`
+
+For order book workflows:
+
+1. `ob_markets_list` or `ob_markets_show`
+2. `ob_markets_orderbook` and `ob_markets_trades`
+3. `wallet_balances` and `ob_positions_list`
+4. `ob_limit_*` or `ob_market_*` with `dryRun=true`
+5. `ob_orders_*` and `ob_positions_*` for post-trade management
 
 ## API Override Rules
 
@@ -73,6 +94,7 @@ myriad mcp
 
 - Do not perform wallet keychain remediation here; hand off to `/myriad-wallet-ops`.
 - For detailed trading policy decisions, hand off to `/myriad-trade-execution`.
+- For order book-specific execution policy, hand off to `/myriad-orderbook`.
 
 ## Reference
 

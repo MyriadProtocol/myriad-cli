@@ -5,13 +5,19 @@ import process from "node:process";
 
 export type NetworkConfig = {
   name: string;
-  rpcUrl: string;
-  predictionMarketAddress: string;
-  predictionMarketQuerierAddress: string;
-  defaultTokenAddress: string;
+  rpcUrl?: string;
+  apiBaseUrl?: string;
+  predictionMarketAddress?: string;
+  predictionMarketQuerierAddress?: string;
+  defaultTokenAddress?: string;
   usdtTokenAddress?: string;
   usd1TokenAddress?: string;
   pancakeRouterV2Address?: string;
+  obExchangeAddress?: string;
+  obConditionalTokens?: string;
+  obManager?: string;
+  obNegRiskAdapter?: string;
+  wrappedCollateral?: string;
 };
 
 export type RuntimeConfig = {
@@ -21,12 +27,17 @@ export type RuntimeConfig = {
   chainId: number;
   rpcUrl: string;
   privateKey?: string;
-  predictionMarketAddress: string;
-  predictionMarketQuerierAddress: string;
-  collateralTokenAddress: string;
+  predictionMarketAddress?: string;
+  predictionMarketQuerierAddress?: string;
+  collateralTokenAddress?: string;
   usdtTokenAddress?: string;
   usd1TokenAddress?: string;
   pancakeRouterV2Address?: string;
+  obExchangeAddress?: string;
+  obConditionalTokens?: string;
+  obManager?: string;
+  obNegRiskAdapter?: string;
+  wrappedCollateral?: string;
 };
 
 export type GlobalConfigFile = {
@@ -41,6 +52,11 @@ export type GlobalConfigFile = {
   usdtTokenAddress?: string;
   usd1TokenAddress?: string;
   pancakeRouterV2Address?: string;
+  obExchangeAddress?: string;
+  obConditionalTokens?: string;
+  obManager?: string;
+  obNegRiskAdapter?: string;
+  wrappedCollateral?: string;
 };
 
 type TextFileReader = (filePath: string, encoding: BufferEncoding) => string;
@@ -58,13 +74,22 @@ export type RuntimeConfigLoadOptions = GlobalConfigLoadOptions & {
 export const NETWORKS: Record<number, NetworkConfig> = {
   56: {
     name: "BNB Chain",
+    apiBaseUrl: "https://api-v2.myriadprotocol.com/",
     rpcUrl: "https://bsc-dataseed.binance.org/",
     predictionMarketAddress: "0x39E66eE6b2ddaf4DEfDEd3038E0162180dbeF340",
     predictionMarketQuerierAddress: "0xDeFb36c47754D2e37d44b8b8C647D4D643e03bAd",
     defaultTokenAddress: "0x55d398326f99059fF775485246999027B3197955",
     usdtTokenAddress: "0x55d398326f99059fF775485246999027B3197955",
     usd1TokenAddress: "0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0d",
-    pancakeRouterV2Address: "0x10ED43C718714eb63d5aA57B78B54704E256024E"
+    pancakeRouterV2Address: "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+    obExchangeAddress: "0xa0b6f8ef8EdB64f395018D1933f2273Ce9f0f16A",
+    obConditionalTokens: "0x6413734f92248D4B29ae35883290BD93212654Dc",
+    obManager: "0xaB5591E280fF9Bf368DB60c3b775b5C7Ba5ea3dB",
+    obNegRiskAdapter: "0xd96F26703Ddbf7d1Cb6858640eca34cF1893d53A",
+    wrappedCollateral: "0x9F124ce59D8De0274574949400640a2677067ACC"
+  },
+  97: {
+    name: "BSC Testnet"
   }
 };
 
@@ -82,7 +107,12 @@ const GLOBAL_CONFIG_KEYS = [
   "collateralTokenAddress",
   "usdtTokenAddress",
   "usd1TokenAddress",
-  "pancakeRouterV2Address"
+  "pancakeRouterV2Address",
+  "obExchangeAddress",
+  "obConditionalTokens",
+  "obManager",
+  "obNegRiskAdapter",
+  "wrappedCollateral"
 ] as const;
 const GLOBAL_CONFIG_KEY_SET = new Set<string>(GLOBAL_CONFIG_KEYS);
 
@@ -166,6 +196,15 @@ function parseGlobalConfig(raw: string, configPath: string): GlobalConfigFile {
     "pancakeRouterV2Address",
     configPath
   );
+  result.obExchangeAddress = parseOptionalGlobalString(value.obExchangeAddress, "obExchangeAddress", configPath);
+  result.obConditionalTokens = parseOptionalGlobalString(
+    value.obConditionalTokens,
+    "obConditionalTokens",
+    configPath
+  );
+  result.obManager = parseOptionalGlobalString(value.obManager, "obManager", configPath);
+  result.obNegRiskAdapter = parseOptionalGlobalString(value.obNegRiskAdapter, "obNegRiskAdapter", configPath);
+  result.wrappedCollateral = parseOptionalGlobalString(value.wrappedCollateral, "wrappedCollateral", configPath);
 
   if (value.chainId !== undefined) {
     if (typeof value.chainId === "number") {
@@ -270,16 +309,44 @@ export function loadRuntimeConfig(
     globalConfig.pancakeRouterV2Address ??
     networkConfig?.pancakeRouterV2Address;
 
-  const rpcUrl = overrides.rpcUrl ?? env.MYRIAD_RPC_URL ?? globalConfig.rpcUrl ?? networkConfig?.rpcUrl;
+  const obExchangeAddress =
+    overrides.obExchangeAddress ??
+    env.MYRIAD_OB_EXCHANGE_ADDRESS ??
+    globalConfig.obExchangeAddress ??
+    networkConfig?.obExchangeAddress;
 
-  if (!predictionMarketAddress || !predictionMarketQuerierAddress || !collateralTokenAddress || !rpcUrl) {
-    throw new Error(
-      `Missing deployment config for chain ${chainId}. Set MYRIAD_PM_CONTRACT, MYRIAD_PM_QUERIER_CONTRACT, MYRIAD_COLLATERAL_TOKEN, and MYRIAD_RPC_URL via flags, environment, or global config.`
-    );
+  const obConditionalTokens =
+    overrides.obConditionalTokens ??
+    env.MYRIAD_OB_CONDITIONAL_TOKENS ??
+    globalConfig.obConditionalTokens ??
+    networkConfig?.obConditionalTokens;
+
+  const obManager =
+    overrides.obManager ??
+    env.MYRIAD_OB_MANAGER ??
+    globalConfig.obManager ??
+    networkConfig?.obManager;
+
+  const obNegRiskAdapter =
+    overrides.obNegRiskAdapter ??
+    env.MYRIAD_OB_NEG_RISK_ADAPTER ??
+    globalConfig.obNegRiskAdapter ??
+    networkConfig?.obNegRiskAdapter;
+
+  const wrappedCollateral =
+    overrides.wrappedCollateral ??
+    env.MYRIAD_WRAPPED_COLLATERAL ??
+    globalConfig.wrappedCollateral ??
+    networkConfig?.wrappedCollateral;
+
+  const rpcUrl = overrides.rpcUrl ?? env.MYRIAD_RPC_URL ?? globalConfig.rpcUrl ?? networkConfig?.rpcUrl;
+  if (!rpcUrl) {
+    throw new Error(`Missing RPC config for chain ${chainId}. Set MYRIAD_RPC_URL via flags, environment, or global config.`);
   }
 
   return {
-    apiBaseUrl: overrides.apiBaseUrl ?? env.MYRIAD_API_BASE_URL ?? globalConfig.apiBaseUrl ?? DEFAULT_API_BASE_URL,
+    apiBaseUrl:
+      overrides.apiBaseUrl ?? env.MYRIAD_API_BASE_URL ?? globalConfig.apiBaseUrl ?? networkConfig?.apiBaseUrl ?? DEFAULT_API_BASE_URL,
     apiKey: overrides.apiKey ?? env.MYRIAD_API_KEY ?? globalConfig.apiKey,
     allowance: overrides.allowance ?? env.MYRIAD_ALLOWANCE ?? globalConfig.allowance,
     chainId,
@@ -290,7 +357,63 @@ export function loadRuntimeConfig(
     collateralTokenAddress,
     usdtTokenAddress,
     usd1TokenAddress,
-    pancakeRouterV2Address
+    pancakeRouterV2Address,
+    obExchangeAddress,
+    obConditionalTokens,
+    obManager,
+    obNegRiskAdapter,
+    wrappedCollateral
+  };
+}
+
+export function assertCollateralConfig(config: RuntimeConfig): RuntimeConfig & { collateralTokenAddress: string } {
+  if (!config.collateralTokenAddress) {
+    throw new Error(
+      `Collateral token is not configured for chain ${config.chainId}. Set MYRIAD_COLLATERAL_TOKEN or --collateral-token-address.`
+    );
+  }
+  return config as RuntimeConfig & { collateralTokenAddress: string };
+}
+
+export function assertAmmConfig(config: RuntimeConfig): RuntimeConfig & {
+  predictionMarketAddress: string;
+  predictionMarketQuerierAddress: string;
+  collateralTokenAddress: string;
+} {
+  const withCollateral = assertCollateralConfig(config);
+  if (!withCollateral.predictionMarketAddress || !withCollateral.predictionMarketQuerierAddress) {
+    throw new Error(
+      `AMM deployment config is incomplete for chain ${config.chainId}. ` +
+        "Set MYRIAD_PM_CONTRACT and MYRIAD_PM_QUERIER_CONTRACT via flags, environment, or global config."
+    );
+  }
+
+  return withCollateral as RuntimeConfig & {
+    predictionMarketAddress: string;
+    predictionMarketQuerierAddress: string;
+    collateralTokenAddress: string;
+  };
+}
+
+export function assertOrderbookConfig(config: RuntimeConfig): RuntimeConfig & {
+  collateralTokenAddress: string;
+  obExchangeAddress: string;
+  obConditionalTokens: string;
+  obManager: string;
+} {
+  const withCollateral = assertCollateralConfig(config);
+  if (!withCollateral.obExchangeAddress || !withCollateral.obConditionalTokens || !withCollateral.obManager) {
+    throw new Error(
+      `Orderbook deployment config is incomplete for chain ${config.chainId}. ` +
+        "Set MYRIAD_OB_EXCHANGE_ADDRESS, MYRIAD_OB_CONDITIONAL_TOKENS, and MYRIAD_OB_MANAGER."
+    );
+  }
+
+  return withCollateral as RuntimeConfig & {
+    collateralTokenAddress: string;
+    obExchangeAddress: string;
+    obConditionalTokens: string;
+    obManager: string;
   };
 }
 

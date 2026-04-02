@@ -4,8 +4,8 @@ This document describes the REST API exposed by the Myriad Protocol API service.
 
 ## Base URL
 
-- Staging - [`https://api-v2.staging.myriadprotocol.com/`](https://api-v2.staging.myriadprotocol.com/)
 - **Production** - [`https://api-v2.myriadprotocol.com/`](https://api-v2.myriadprotocol.com/)
+- Staging - [`https://api-v2.staging.myriadprotocol.com/`](https://api-v2.staging.myriadprotocol.com/)
 
 ## Authentication
 

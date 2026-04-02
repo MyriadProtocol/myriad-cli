@@ -1,0 +1,4 @@
+interface:
+  display_name: "Myriad Order Book"
+  short_description: "Operate Order Book markets, orders, and positions"
+  default_prompt: "Use $myriad-orderbook to discover order book markets, inspect depth, place limit/market orders, manage orders, and handle positions safely."

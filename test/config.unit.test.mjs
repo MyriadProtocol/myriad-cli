@@ -221,3 +221,40 @@ test("loadRuntimeConfig uses CLI overrides over env and global config", () => {
   assert.equal(runtime.predictionMarketQuerierAddress, "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
   assert.equal(runtime.collateralTokenAddress, "0xffffffffffffffffffffffffffffffffffffffff");
 });
+
+test("loadRuntimeConfig provides built-in orderbook defaults for chain 56", () => {
+  const runtime = loadRuntimeConfig(
+    {
+      chainId: 56
+    },
+    {
+      env: {}
+    }
+  );
+
+  assert.equal(runtime.chainId, 56);
+  assert.equal(runtime.apiBaseUrl, "https://api-v2.myriadprotocol.com/");
+  assert.equal(runtime.rpcUrl, "https://bsc-dataseed.binance.org/");
+  assert.equal(runtime.collateralTokenAddress, "0x55d398326f99059fF775485246999027B3197955");
+  assert.equal(runtime.usd1TokenAddress, "0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0d");
+  assert.equal(runtime.obExchangeAddress, "0xa0b6f8ef8EdB64f395018D1933f2273Ce9f0f16A");
+  assert.equal(runtime.obConditionalTokens, "0x6413734f92248D4B29ae35883290BD93212654Dc");
+  assert.equal(runtime.obManager, "0xaB5591E280fF9Bf368DB60c3b775b5C7Ba5ea3dB");
+  assert.equal(runtime.obNegRiskAdapter, "0xd96F26703Ddbf7d1Cb6858640eca34cF1893d53A");
+  assert.equal(runtime.wrappedCollateral, "0x9F124ce59D8De0274574949400640a2677067ACC");
+});
+
+test("loadRuntimeConfig requires explicit OB environment config for chain 97", () => {
+  assert.throws(
+    () =>
+      loadRuntimeConfig(
+        {
+          chainId: 97
+        },
+        {
+          env: {}
+        }
+      ),
+    /Missing RPC config for chain 97/
+  );
+});

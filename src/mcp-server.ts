@@ -8,6 +8,17 @@ import {
   ClaimVoidedInput,
   ListMarketsInput,
   MyriadOperations,
+  ObLimitOrderInput,
+  ObMarketBookInput,
+  ObMarketOrderInput,
+  ObMarketsListInput,
+  ObMarketTradesInput,
+  ObOrderCancelInput,
+  ObOrderCancelAllInput,
+  ObOrdersListInput,
+  ObPositionActionInput,
+  ObPositionRedeemInput,
+  ObPositionsListInput,
   OperationContext,
   PortfolioInput,
   StableSwapInput,
@@ -149,6 +160,140 @@ const CLAIM_ALL_SCHEMA = z
   })
   .strict();
 
+const OB_MARKETS_LIST_SCHEMA = z
+  .object({
+    state: z.string().optional(),
+    keyword: z.string().optional(),
+    sort: z.string().optional(),
+    order: z.string().optional(),
+    page: INTEGER_LIKE_SCHEMA.optional(),
+    limit: INTEGER_LIKE_SCHEMA.optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_MARKETS_SHOW_SCHEMA = z
+  .object({
+    market: z.union([z.string().trim().min(1), z.number().int()]),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_MARKETS_ORDERBOOK_SCHEMA = z
+  .object({
+    ...MARKET_REFERENCE_SHAPE,
+    outcomeId: INTEGER_LIKE_SCHEMA.optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_MARKETS_TRADES_SCHEMA = z
+  .object({
+    ...MARKET_REFERENCE_SHAPE,
+    outcomeId: INTEGER_LIKE_SCHEMA.optional(),
+    page: INTEGER_LIKE_SCHEMA.optional(),
+    limit: INTEGER_LIKE_SCHEMA.optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_LIMIT_ORDER_SCHEMA = z
+  .object({
+    ...MARKET_REFERENCE_SHAPE,
+    outcomeId: INTEGER_LIKE_SCHEMA,
+    price: NUMBER_LIKE_SCHEMA,
+    shares: NUMBER_LIKE_SCHEMA,
+    timeInForce: z.string().optional(),
+    waitMs: INTEGER_LIKE_SCHEMA.optional(),
+    expiration: INTEGER_LIKE_SCHEMA.optional(),
+    minFillShares: NUMBER_LIKE_SCHEMA.optional(),
+    allowance: z.string().optional(),
+    skipApproval: z.boolean().optional(),
+    dryRun: z.boolean().optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_MARKET_ORDER_SCHEMA = z
+  .object({
+    ...MARKET_REFERENCE_SHAPE,
+    outcomeId: INTEGER_LIKE_SCHEMA,
+    shares: NUMBER_LIKE_SCHEMA.optional(),
+    value: NUMBER_LIKE_SCHEMA.optional(),
+    timeInForce: z.string().optional(),
+    waitMs: INTEGER_LIKE_SCHEMA.optional(),
+    allowance: z.string().optional(),
+    skipApproval: z.boolean().optional(),
+    dryRun: z.boolean().optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_ORDERS_LIST_SCHEMA = z
+  .object({
+    trader: z.string().optional(),
+    marketId: INTEGER_LIKE_SCHEMA.optional(),
+    status: z.string().optional(),
+    offset: INTEGER_LIKE_SCHEMA.optional(),
+    limit: INTEGER_LIKE_SCHEMA.optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_ORDERS_SHOW_SCHEMA = z
+  .object({
+    orderHash: z.string().trim().min(1),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_ORDERS_CANCEL_SCHEMA = z
+  .object({
+    orderHash: z.string().trim().min(1),
+    dryRun: z.boolean().optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_ORDERS_CANCEL_ALL_SCHEMA = z
+  .object({
+    ...MARKET_REFERENCE_SHAPE,
+    dryRun: z.boolean().optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_POSITIONS_LIST_SCHEMA = z
+  .object({
+    address: z.string().optional(),
+    marketId: INTEGER_LIKE_SCHEMA.optional(),
+    marketSlug: z.string().optional(),
+    tokenAddress: z.string().optional(),
+    page: INTEGER_LIKE_SCHEMA.optional(),
+    limit: INTEGER_LIKE_SCHEMA.optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_POSITION_ACTION_SCHEMA = z
+  .object({
+    ...MARKET_REFERENCE_SHAPE,
+    amount: NUMBER_LIKE_SCHEMA,
+    allowance: z.string().optional(),
+    skipApproval: z.boolean().optional(),
+    dryRun: z.boolean().optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_POSITION_REDEEM_SCHEMA = z
+  .object({
+    ...MARKET_REFERENCE_SHAPE,
+    dryRun: z.boolean().optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
 export const MCP_TOOL_NAMES = [
   "markets_list",
   "markets_show",
@@ -160,7 +305,23 @@ export const MCP_TOOL_NAMES = [
   "trade_sell",
   "claim_winnings",
   "claim_voided",
-  "claim_all"
+  "claim_all",
+  "ob_markets_list",
+  "ob_markets_show",
+  "ob_markets_orderbook",
+  "ob_markets_trades",
+  "ob_limit_buy",
+  "ob_limit_sell",
+  "ob_market_buy",
+  "ob_market_sell",
+  "ob_orders_list",
+  "ob_orders_show",
+  "ob_orders_cancel",
+  "ob_orders_cancel_all",
+  "ob_positions_list",
+  "ob_positions_split",
+  "ob_positions_merge",
+  "ob_positions_redeem"
 ] as const;
 
 export type MyriadOperationsLike = {
@@ -175,6 +336,22 @@ export type MyriadOperationsLike = {
   claimWinnings(input: ClaimInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   claimVoided(input: ClaimVoidedInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   claimAll(input: ClaimAllInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obMarketsList(input: ObMarketsListInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obMarketsShow(marketArgument: string | number, input?: { networkId?: string | number }, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obMarketOrderbook(input: ObMarketBookInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obMarketTrades(input: ObMarketTradesInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obLimitBuy(input: ObLimitOrderInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obLimitSell(input: ObLimitOrderInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obMarketBuy(input: ObMarketOrderInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obMarketSell(input: ObMarketOrderInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obOrdersList(input: ObOrdersListInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obOrdersShow(input: { orderHash: string }, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obOrdersCancel(input: ObOrderCancelInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obOrdersCancelAll(input: ObOrderCancelAllInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obPositionsList(input: ObPositionsListInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obPositionsSplit(input: ObPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obPositionsMerge(input: ObPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obPositionsRedeem(input: ObPositionRedeemInput, overrides?: ApiRequestOverrides): Promise<unknown>;
 };
 
 function extractApiOverrides(input: { apiBaseUrl?: string; apiKey?: string }): ApiRequestOverrides {
@@ -388,6 +565,214 @@ export function createMyriadMcpServer(operations: MyriadOperationsLike, serverIn
     async (args) => {
       const { apiBaseUrl, apiKey, ...input } = args;
       return executeTool(() => operations.claimAll(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_markets_list",
+    {
+      title: "Orderbook Markets List",
+      description: "List orderbook markets.",
+      inputSchema: OB_MARKETS_LIST_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obMarketsList(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_markets_show",
+    {
+      title: "Orderbook Market Show",
+      description: "Show an orderbook market by id or slug.",
+      inputSchema: OB_MARKETS_SHOW_SCHEMA
+    },
+    async (args) => {
+      const { market, apiBaseUrl, apiKey } = args;
+      return executeTool(() => operations.obMarketsShow(market, {}, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_markets_orderbook",
+    {
+      title: "Orderbook Depth",
+      description: "Get aggregated bids and asks for an orderbook market outcome.",
+      inputSchema: OB_MARKETS_ORDERBOOK_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obMarketOrderbook(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_markets_trades",
+    {
+      title: "Orderbook Trades",
+      description: "Get recent trades for an orderbook market.",
+      inputSchema: OB_MARKETS_TRADES_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obMarketTrades(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_limit_buy",
+    {
+      title: "Orderbook Limit Buy",
+      description: "Place a signed orderbook limit buy. Executes immediately unless dryRun is true.",
+      inputSchema: OB_LIMIT_ORDER_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obLimitBuy(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_limit_sell",
+    {
+      title: "Orderbook Limit Sell",
+      description: "Place a signed orderbook limit sell. Executes immediately unless dryRun is true.",
+      inputSchema: OB_LIMIT_ORDER_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obLimitSell(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_market_buy",
+    {
+      title: "Orderbook Market Buy",
+      description: "Place a synthesized orderbook market buy. Executes immediately unless dryRun is true.",
+      inputSchema: OB_MARKET_ORDER_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obMarketBuy(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_market_sell",
+    {
+      title: "Orderbook Market Sell",
+      description: "Place a synthesized orderbook market sell. Executes immediately unless dryRun is true.",
+      inputSchema: OB_MARKET_ORDER_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obMarketSell(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_orders_list",
+    {
+      title: "Orderbook Orders List",
+      description: "List orderbook orders for a trader.",
+      inputSchema: OB_ORDERS_LIST_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obOrdersList(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_orders_show",
+    {
+      title: "Orderbook Order Show",
+      description: "Show a single orderbook order by hash.",
+      inputSchema: OB_ORDERS_SHOW_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obOrdersShow(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_orders_cancel",
+    {
+      title: "Orderbook Order Cancel",
+      description: "Cancel an orderbook order. Executes immediately unless dryRun is true.",
+      inputSchema: OB_ORDERS_CANCEL_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obOrdersCancel(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_orders_cancel_all",
+    {
+      title: "Orderbook Order Cancel All",
+      description: "Cancel all open orderbook orders for the configured trader on a specific market.",
+      inputSchema: OB_ORDERS_CANCEL_ALL_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obOrdersCancelAll(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_positions_list",
+    {
+      title: "Orderbook Positions List",
+      description: "Get the Order Book portfolio for a wallet.",
+      inputSchema: OB_POSITIONS_LIST_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obPositionsList(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_positions_split",
+    {
+      title: "Orderbook Positions Split",
+      description: "Split collateral into YES + NO shares. Executes immediately unless dryRun is true.",
+      inputSchema: OB_POSITION_ACTION_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obPositionsSplit(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_positions_merge",
+    {
+      title: "Orderbook Positions Merge",
+      description: "Merge YES + NO shares back into collateral. Executes immediately unless dryRun is true.",
+      inputSchema: OB_POSITION_ACTION_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obPositionsMerge(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_positions_redeem",
+    {
+      title: "Orderbook Positions Redeem",
+      description: "Redeem a resolved or voided position. Executes immediately unless dryRun is true.",
+      inputSchema: OB_POSITION_REDEEM_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obPositionsRedeem(input, extractApiOverrides({ apiBaseUrl, apiKey })));
     }
   );
 

@@ -34,6 +34,8 @@ export type Market = {
   description?: string;
   state: "open" | "closed" | "resolved" | string;
   networkId: number;
+  executionMode?: number;
+  execution_mode?: number;
   token?: MarketToken;
   outcomes?: MarketOutcome[];
   [key: string]: unknown;
@@ -123,5 +125,64 @@ export type PortfolioMarketItem = {
     positions?: PortfolioMarketPosition[];
     [key: string]: unknown;
   };
+  [key: string]: unknown;
+};
+
+export type OrderbookLevel = [string, string];
+
+export type OrderbookResponse = {
+  bids: OrderbookLevel[];
+  asks: OrderbookLevel[];
+};
+
+export type OrderbookTrade = {
+  price: string;
+  priceAfterFees?: string;
+  amount: string;
+  side: string;
+  outcome?: number;
+  txHash?: string;
+  timestamp?: number;
+  fees?: Record<string, string>;
+  [key: string]: unknown;
+};
+
+export type OrderbookTradesResponse = ApiListResponse<OrderbookTrade> | OrderbookTrade[];
+
+export type ClobOrderSide = 0 | 1;
+
+export type ClobTimeInForce = "GTC" | "GTD" | "FOK" | "FAK";
+
+export type ClobOrder = {
+  trader: string;
+  marketId: string;
+  outcomeId: number;
+  side: ClobOrderSide;
+  amount: string;
+  price: string;
+  minFillAmount: string;
+  nonce: string;
+  expiration: string;
+};
+
+export type ClobOrderRecord = {
+  orderHash: string;
+  order: ClobOrder;
+  signature: string;
+  status: string;
+  filledAmount?: string;
+  timeInForce?: string;
+  networkId?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  cancelledAt?: string | null;
+  filledAt?: string | null;
+  [key: string]: unknown;
+};
+
+export type PositionCalldataResponse = {
+  to: string;
+  calldata: string;
+  value?: string;
   [key: string]: unknown;
 };

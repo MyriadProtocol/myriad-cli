@@ -1,11 +1,27 @@
 import process from "node:process";
-import { utils, Wallet } from "ethers";
+import { BigNumber, constants, utils, Wallet } from "ethers";
 import { AllowancePreference, resolveAllowancePreference } from "./allowance.js";
 import { MyriadApiClient } from "./api.js";
-import { NETWORKS, parseInteger, parseNumber, RuntimeConfig } from "./config.js";
+import {
+  assertAmmConfig,
+  assertCollateralConfig,
+  assertOrderbookConfig,
+  NETWORKS,
+  parseInteger,
+  parseNumber,
+  RuntimeConfig
+} from "./config.js";
 import { EvmExecutionService } from "./executor.js";
 import { PancakeSwapV2Service } from "./pancakeswap.js";
-import { Market, MarketReference, PortfolioPosition } from "./types.js";
+import {
+  ClobOrder,
+  ClobOrderRecord,
+  ClobTimeInForce,
+  Market,
+  MarketReference,
+  OrderbookLevel,
+  PortfolioPosition
+} from "./types.js";
 import { WalletBalanceService } from "./wallet.js";
 import { loadConfiguredWalletPrivateKey, readConfiguredWalletAddress } from "./wallet-store.js";
 
@@ -14,9 +30,16 @@ export type ApiRequestOverrides = {
   apiKey?: string;
 };
 
+export type OrderWaitProgressEvent =
+  | { type: "posted"; timeInForce: ClobTimeInForce }
+  | { type: "countdown"; remainingSeconds: number };
+
+export type OrderWaitProgressReporter = (event: OrderWaitProgressEvent) => void;
+
 export type OperationContext = {
   runtime: RuntimeConfig;
   globalAllowance?: string;
+  orderWaitProgressReporter?: OrderWaitProgressReporter;
 };
 
 export type MarketReferenceInput = {
@@ -35,8 +58,19 @@ export type ListMarketsInput = {
   limit?: string | number;
 };
 
+export type ObMarketsListInput = ListMarketsInput;
+
 export type PortfolioInput = {
   networkId?: string | number;
+  marketId?: string | number;
+  marketSlug?: string;
+  tokenAddress?: string;
+  page?: string | number;
+  limit?: string | number;
+};
+
+export type ObPositionsListInput = {
+  address?: string;
   marketId?: string | number;
   marketSlug?: string;
   tokenAddress?: string;
@@ -114,11 +148,95 @@ export type ClaimAllInput = {
   dryRun?: boolean;
 };
 
+export type ObMarketBookInput = MarketReferenceInput & {
+  outcomeId?: string | number;
+};
+
+export type ObMarketTradesInput = MarketReferenceInput & {
+  outcomeId?: string | number;
+  page?: string | number;
+  limit?: string | number;
+};
+
+export type ObLimitOrderInput = MarketReferenceInput & {
+  outcomeId: string | number;
+  price: string | number;
+  shares: string | number;
+  timeInForce?: string;
+  waitMs?: string | number;
+  expiration?: string | number;
+  minFillShares?: string | number;
+  allowance?: string;
+  skipApproval?: boolean;
+  dryRun?: boolean;
+};
+
+export type ObMarketOrderInput = MarketReferenceInput & {
+  outcomeId: string | number;
+  shares?: string | number;
+  value?: string | number;
+  timeInForce?: string;
+  waitMs?: string | number;
+  allowance?: string;
+  skipApproval?: boolean;
+  dryRun?: boolean;
+};
+
+export type ObOrdersListInput = {
+  trader?: string;
+  marketId?: string | number;
+  status?: string;
+  offset?: string | number;
+  limit?: string | number;
+  networkId?: string | number;
+};
+
+export type ObOrderShowInput = {
+  orderHash: string;
+};
+
+export type ObOrderCancelInput = {
+  orderHash: string;
+  dryRun?: boolean;
+};
+
+export type ObOrderCancelAllInput = MarketReferenceInput & {
+  dryRun?: boolean;
+};
+
+export type ObPositionActionInput = MarketReferenceInput & {
+  amount: string | number;
+  allowance?: string;
+  skipApproval?: boolean;
+  dryRun?: boolean;
+};
+
+export type ObPositionRedeemInput = MarketReferenceInput & {
+  dryRun?: boolean;
+};
+
 type ClaimTarget = {
   actionExpected: "claim_winnings" | "claim_voided";
   marketId: number;
   networkId: number;
   outcomeId?: number;
+};
+
+const ONE_E18 = BigNumber.from("1000000000000000000");
+const DEFAULT_IMMEDIATE_ORDER_WAIT_MS = 20000;
+const ORDER_STATUS_POLL_INTERVAL_MS = 500;
+const CLOB_ORDER_TYPES: Record<string, Array<{ name: string; type: string }>> = {
+  Order: [
+    { name: "trader", type: "address" },
+    { name: "marketId", type: "uint256" },
+    { name: "outcomeId", type: "uint8" },
+    { name: "side", type: "uint8" },
+    { name: "amount", type: "uint256" },
+    { name: "price", type: "uint256" },
+    { name: "minFillAmount", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+    { name: "expiration", type: "uint256" }
+  ]
 };
 
 function parseIntegerValue(input: string | number, fieldName: string): number {
@@ -155,6 +273,395 @@ function parseMaybeNumber(input: string | number | undefined, fieldName: string)
   return parseNumberValue(input, fieldName);
 }
 
+function normalizePositiveDecimalInput(input: string | number, fieldName: string): string {
+  const normalized = typeof input === "number" ? String(input) : input.trim();
+  if (!/^\d+(\.\d+)?$/.test(normalized)) {
+    throw new Error(`${fieldName} must be a positive decimal amount. Received: ${input}`);
+  }
+  if (Number.parseFloat(normalized) <= 0) {
+    throw new Error(`${fieldName} must be greater than zero. Received: ${input}`);
+  }
+  return normalized;
+}
+
+function parseTokenUnits(input: string | number, decimals: number, fieldName: string): string {
+  const normalized = normalizePositiveDecimalInput(input, fieldName);
+  try {
+    const parsed = utils.parseUnits(normalized, decimals);
+    if (parsed.lte(constants.Zero)) {
+      throw new Error(`${fieldName} must be greater than zero.`);
+    }
+    return parsed.toString();
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid ${fieldName}. ${details}`);
+  }
+}
+
+function parsePriceUnits(input: string | number): string {
+  const normalized = normalizePositiveDecimalInput(input, "price");
+  let parsed: BigNumber;
+  try {
+    parsed = utils.parseUnits(normalized, 18);
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid price. ${details}`);
+  }
+
+  if (parsed.lte(constants.Zero) || parsed.gt(ONE_E18)) {
+    throw new Error("price must be between 0 and 1 inclusive.");
+  }
+
+  return parsed.toString();
+}
+
+function getMarketCollateralDecimals(market: Market): number {
+  const decimals = market.token?.decimals;
+  if (typeof decimals === "number" && Number.isInteger(decimals) && decimals >= 0) {
+    return decimals;
+  }
+  return 18;
+}
+
+function getMarketExecutionMode(market: Market): number | undefined {
+  const candidate: unknown = market.executionMode ?? market.execution_mode;
+  if (typeof candidate === "number" && Number.isFinite(candidate)) {
+    return candidate;
+  }
+  if (typeof candidate === "string" && candidate.trim().length > 0) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function ensureOrderbookMarket(market: Market): void {
+  const executionMode = getMarketExecutionMode(market);
+  if (executionMode !== undefined && executionMode !== 1) {
+    throw new Error(`Market ${market.id} is not an orderbook market (execution_mode=${executionMode}).`);
+  }
+}
+
+function parseTimeInForce(
+  input: string | undefined,
+  defaultValue: ClobTimeInForce,
+  allowed: ClobTimeInForce[]
+): ClobTimeInForce {
+  const normalized = (input ?? defaultValue).trim().toUpperCase() as ClobTimeInForce;
+  if (!allowed.includes(normalized)) {
+    throw new Error(`Unsupported time-in-force "${input}". Use ${allowed.join(" | ")}.`);
+  }
+  return normalized;
+}
+
+function isImmediateTimeInForce(timeInForce: ClobTimeInForce): boolean {
+  return timeInForce === "FAK" || timeInForce === "FOK";
+}
+
+function resolveOrderWaitMs(input: string | number | undefined, timeInForce: ClobTimeInForce): number {
+  if (input === undefined) {
+    return isImmediateTimeInForce(timeInForce) ? DEFAULT_IMMEDIATE_ORDER_WAIT_MS : 0;
+  }
+
+  const parsed = parseIntegerValue(input, "wait-ms");
+  if (parsed < 0) {
+    throw new Error(`wait-ms must be greater than or equal to zero. Received: ${input}`);
+  }
+  return parsed;
+}
+
+function resolveExpiration(timeInForce: ClobTimeInForce, expiration?: string | number): string {
+  const parsed = expiration === undefined ? 0 : parseIntegerValue(expiration, "expiration");
+  if (timeInForce === "GTD") {
+    if (parsed <= 0) {
+      throw new Error("expiration must be a positive unix timestamp when --time-in-force is GTD.");
+    }
+    return String(parsed);
+  }
+
+  if (parsed !== 0) {
+    throw new Error("expiration may only be set when --time-in-force is GTD.");
+  }
+
+  return "0";
+}
+
+function ensureOrderbookRuntime(runtime: RuntimeConfig) {
+  const orderbookRuntime =
+    !runtime.collateralTokenAddress && runtime.usd1TokenAddress
+      ? {
+          ...runtime,
+          collateralTokenAddress: runtime.usd1TokenAddress
+        }
+      : runtime;
+
+  return assertOrderbookConfig(orderbookRuntime);
+}
+
+function formatRawUnits(raw: BigNumber, decimals: number): string {
+  return utils.formatUnits(raw, decimals);
+}
+
+function multiplyPriceAndAmount(priceRaw: BigNumber, amountRaw: BigNumber): BigNumber {
+  return amountRaw.mul(priceRaw).div(ONE_E18);
+}
+
+function generateClobNonce(): string {
+  return BigNumber.from(utils.randomBytes(32)).toString();
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function getClobSideLabel(side: 0 | 1): "buy" | "sell" {
+  return side === 0 ? "buy" : "sell";
+}
+
+function getOrderbookSide(levelsForBuy: boolean, book: { bids: OrderbookLevel[]; asks: OrderbookLevel[] }): OrderbookLevel[] {
+  return levelsForBuy ? book.asks ?? [] : book.bids ?? [];
+}
+
+function buildClobDomain(runtime: RuntimeConfig & { obExchangeAddress: string }) {
+  return {
+    name: "MyriadCTFExchange",
+    version: "1",
+    chainId: runtime.chainId,
+    verifyingContract: runtime.obExchangeAddress
+  };
+}
+
+function buildClobCancelRequest(record: ClobOrderRecord, defaultNetworkId: number): {
+  order: ClobOrder;
+  signature: string;
+  network_id: number;
+} {
+  if (!record.order) {
+    throw new Error(`Order ${record.orderHash} is missing its signed order payload.`);
+  }
+  if (!record.signature) {
+    throw new Error(`Order ${record.orderHash} is missing its signature.`);
+  }
+  return {
+    order: record.order,
+    signature: record.signature,
+    network_id: record.networkId ?? defaultNetworkId
+  };
+}
+
+function estimateBuyCollateralApproval(amountRaw: BigNumber, priceRaw: BigNumber): BigNumber {
+  // Add a modest fee cushion because the API validates notional + fee, and the fee schedule is not exposed here.
+  return multiplyPriceAndAmount(priceRaw, amountRaw).mul(105).div(100);
+}
+
+function parseClobStatus(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseBigNumberValue(value: unknown): BigNumber | undefined {
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
+    return undefined;
+  }
+
+  try {
+    const parsed = BigNumber.from(String(value));
+    return parsed.gte(constants.Zero) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isTerminalOrderStatus(status: string | undefined): boolean {
+  return status === "filled" || status === "cancelled" || status === "expired";
+}
+
+function deriveOrderCompletion(record: {
+  status?: unknown;
+  filledAmount?: unknown;
+  order?: { amount?: unknown } | undefined;
+}): { completion: string; finalized: boolean; observedStatus?: string } {
+  const observedStatus = parseClobStatus(record.status);
+  const orderAmountRaw = parseBigNumberValue(record.order?.amount);
+  const filledAmountRaw = parseBigNumberValue(record.filledAmount) ?? constants.Zero;
+
+  if (observedStatus === "filled" || (orderAmountRaw && filledAmountRaw.gte(orderAmountRaw))) {
+    return {
+      completion: "filled",
+      finalized: true,
+      observedStatus: observedStatus ?? "filled"
+    };
+  }
+
+  if (filledAmountRaw.gt(constants.Zero)) {
+    return {
+      completion: "partially_filled",
+      finalized: observedStatus === "cancelled" || observedStatus === "expired",
+      observedStatus
+    };
+  }
+
+  if (observedStatus === "cancelled") {
+    return {
+      completion: "cancelled",
+      finalized: true,
+      observedStatus
+    };
+  }
+
+  if (observedStatus === "expired") {
+    return {
+      completion: "expired",
+      finalized: true,
+      observedStatus
+    };
+  }
+
+  if (observedStatus === "open") {
+    return {
+      completion: "open",
+      finalized: false,
+      observedStatus
+    };
+  }
+
+  return {
+    completion: "pending_sync",
+    finalized: false,
+    observedStatus
+  };
+}
+
+function createClobOrder(params: {
+  trader: string;
+  marketId: number;
+  outcomeId: number;
+  side: 0 | 1;
+  amountRaw: string;
+  priceRaw: string;
+  minFillAmountRaw?: string;
+  expiration: string;
+}): ClobOrder {
+  return {
+    trader: utils.getAddress(params.trader),
+    marketId: String(params.marketId),
+    outcomeId: params.outcomeId,
+    side: params.side,
+    amount: params.amountRaw,
+    price: params.priceRaw,
+    minFillAmount: params.minFillAmountRaw ?? "0",
+    nonce: generateClobNonce(),
+    expiration: params.expiration
+  };
+}
+
+async function signClobOrder(
+  privateKey: string,
+  runtime: RuntimeConfig & { obExchangeAddress: string },
+  order: ClobOrder
+): Promise<{ signature: string; orderHash: string }> {
+  const wallet = new Wallet(privateKey);
+  const domain = buildClobDomain(runtime);
+  const signature = await wallet._signTypedData(domain, CLOB_ORDER_TYPES, order);
+  const orderHash = utils._TypedDataEncoder.hash(domain, CLOB_ORDER_TYPES, order);
+  return { signature, orderHash };
+}
+
+function walkOrderbook(params: {
+  side: "buy" | "sell";
+  levels: OrderbookLevel[];
+  requestedSharesRaw?: string;
+  requestedValueRaw?: string;
+}) {
+  const requestedSharesRaw = params.requestedSharesRaw ? BigNumber.from(params.requestedSharesRaw) : undefined;
+  const requestedValueRaw = params.requestedValueRaw ? BigNumber.from(params.requestedValueRaw) : undefined;
+
+  if (!requestedSharesRaw && !requestedValueRaw) {
+    throw new Error("Internal error: market order walk requires requested shares or value.");
+  }
+
+  const levels = params.levels.map(([price, amount]) => ({
+    priceRaw: BigNumber.from(price),
+    amountRaw: BigNumber.from(amount)
+  }));
+
+  let accumulatedSharesRaw = BigNumber.from(0);
+  let accumulatedValueRaw = BigNumber.from(0);
+  let deepestPriceRaw = BigNumber.from(0);
+  const consumedLevels: Array<Record<string, string>> = [];
+
+  for (const level of levels) {
+    if (requestedSharesRaw && accumulatedSharesRaw.gte(requestedSharesRaw)) {
+      break;
+    }
+    if (requestedValueRaw && accumulatedValueRaw.gte(requestedValueRaw)) {
+      break;
+    }
+
+    let consumedSharesRaw = level.amountRaw;
+    if (requestedSharesRaw) {
+      const remainingShares = requestedSharesRaw.sub(accumulatedSharesRaw);
+      if (level.amountRaw.gt(remainingShares)) {
+        consumedSharesRaw = remainingShares;
+      }
+    } else if (requestedValueRaw) {
+      const remainingValue = requestedValueRaw.sub(accumulatedValueRaw);
+      const sharesForValue = remainingValue.mul(ONE_E18).add(level.priceRaw.sub(1)).div(level.priceRaw);
+      if (level.amountRaw.gt(sharesForValue)) {
+        consumedSharesRaw = sharesForValue;
+      }
+    }
+
+    if (consumedSharesRaw.lte(constants.Zero)) {
+      continue;
+    }
+
+    const consumedValueRaw = multiplyPriceAndAmount(level.priceRaw, consumedSharesRaw);
+    accumulatedSharesRaw = accumulatedSharesRaw.add(consumedSharesRaw);
+    accumulatedValueRaw = accumulatedValueRaw.add(consumedValueRaw);
+    deepestPriceRaw = level.priceRaw;
+    consumedLevels.push({
+      priceRaw: level.priceRaw.toString(),
+      availableSharesRaw: level.amountRaw.toString(),
+      consumedSharesRaw: consumedSharesRaw.toString(),
+      consumedValueRaw: consumedValueRaw.toString()
+    });
+  }
+
+  const requestedShares = requestedSharesRaw?.toString();
+  const requestedValue = requestedValueRaw?.toString();
+  const shortfallSharesRaw =
+    requestedSharesRaw && accumulatedSharesRaw.lt(requestedSharesRaw)
+      ? requestedSharesRaw.sub(accumulatedSharesRaw).toString()
+      : undefined;
+  const shortfallValueRaw =
+    requestedValueRaw && accumulatedValueRaw.lt(requestedValueRaw)
+      ? requestedValueRaw.sub(accumulatedValueRaw).toString()
+      : undefined;
+
+  if (deepestPriceRaw.isZero()) {
+    throw new Error(`No ${params.side === "buy" ? "asks" : "bids"} are available in the orderbook.`);
+  }
+
+  return {
+    requestedSharesRaw: requestedShares,
+    requestedValueRaw: requestedValue,
+    estimatedSharesRaw: accumulatedSharesRaw.toString(),
+    estimatedValueRaw: accumulatedValueRaw.toString(),
+    deepestPriceRaw: deepestPriceRaw.toString(),
+    shortfallSharesRaw,
+    shortfallValueRaw,
+    levels: consumedLevels
+  };
+}
+
 function resolveMarketReference(options: MarketReferenceInput, defaultNetworkId: number): MarketReference {
   if ((options.marketId && options.marketSlug) || (!options.marketId && !options.marketSlug)) {
     throw new Error("Provide exactly one of --market-id or --market-slug.");
@@ -174,11 +681,28 @@ function resolveMarketReference(options: MarketReferenceInput, defaultNetworkId:
   };
 }
 
-async function resolveMarket(apiClient: MyriadApiClient, marketReference: MarketReference): Promise<Market> {
+async function resolveMarket(
+  apiClient: MyriadApiClient,
+  marketReference: MarketReference,
+  query: Record<string, string | number | boolean | undefined> = {}
+): Promise<Market> {
   if ("market_id" in marketReference) {
-    return apiClient.getMarketById(marketReference.market_id, marketReference.network_id);
+    return apiClient.getMarketById(marketReference.market_id, marketReference.network_id, query);
   }
-  return apiClient.getMarketBySlug(marketReference.market_slug);
+  return apiClient.getMarketBySlug(marketReference.market_slug, query);
+}
+
+async function resolveOrderbookMarket(
+  apiClient: MyriadApiClient,
+  marketReference: MarketReference,
+  runtime: RuntimeConfig
+): Promise<Market> {
+  const market = await resolveMarket(apiClient, marketReference, {
+    execution_mode: 1
+  });
+  ensureNetworkMatch(market, runtime);
+  ensureOrderbookMarket(market);
+  return market;
 }
 
 function ensureNetworkMatch(market: Market, runtime: RuntimeConfig): void {
@@ -246,7 +770,7 @@ function assertPancakeSwapConfig(config: RuntimeConfig): RuntimeConfig & {
 }
 
 function getNativeSymbol(chainId: number): string {
-  if (chainId === 56) {
+  if (chainId === 56 || chainId === 97) {
     return "BNB";
   }
   return "NATIVE";
@@ -257,10 +781,18 @@ function getNetworkName(chainId: number): string {
 }
 
 function getCollateralSymbol(runtime: RuntimeConfig): string {
-  if (runtime.usdtTokenAddress && isSameAddress(runtime.collateralTokenAddress, runtime.usdtTokenAddress)) {
+  if (
+    runtime.collateralTokenAddress &&
+    runtime.usdtTokenAddress &&
+    isSameAddress(runtime.collateralTokenAddress, runtime.usdtTokenAddress)
+  ) {
     return "USDT";
   }
-  if (runtime.usd1TokenAddress && isSameAddress(runtime.collateralTokenAddress, runtime.usd1TokenAddress)) {
+  if (
+    runtime.collateralTokenAddress &&
+    runtime.usd1TokenAddress &&
+    isSameAddress(runtime.collateralTokenAddress, runtime.usd1TokenAddress)
+  ) {
     return "USD1";
   }
   return "COLLATERAL";
@@ -354,10 +886,12 @@ async function listAllClaimTargets(params: {
 export class MyriadOperations {
   private readonly runtime: RuntimeConfig;
   private readonly globalAllowance?: string;
+  private readonly orderWaitProgressReporter?: OrderWaitProgressReporter;
 
   constructor(context: OperationContext) {
     this.runtime = context.runtime;
     this.globalAllowance = context.globalAllowance;
+    this.orderWaitProgressReporter = context.orderWaitProgressReporter;
   }
 
   private runtimeForApi(overrides?: ApiRequestOverrides): RuntimeConfig {
@@ -415,6 +949,190 @@ export class MyriadOperations {
     throw new Error(
       "Provide --address, run `myriad wallet setup`, set MYRIAD_PRIVATE_KEY, or pass --private-key."
     );
+  }
+
+  private async resolveOrderbookSigner(runtime: RuntimeConfig & { obExchangeAddress: string }): Promise<{
+    privateKey: string;
+    walletAddress: string;
+  }> {
+    const privateKey = await this.resolveSignerPrivateKey(runtime);
+    const walletAddress = new Wallet(privateKey).address;
+    return { privateKey, walletAddress };
+  }
+
+  private async waitForSubmittedOrder(
+    apiClient: MyriadApiClient,
+    orderHash: string,
+    waitMs: number,
+    timeInForce: ClobTimeInForce
+  ): Promise<{ observedOrder?: ClobOrderRecord; polled: boolean; timedOut: boolean }> {
+    if (waitMs <= 0) {
+      return {
+        polled: false,
+        timedOut: false
+      };
+    }
+
+    const deadline = Date.now() + waitMs;
+    let observedOrder: ClobOrderRecord | undefined;
+    let nextCountdownSecond = Math.ceil(waitMs / 1000);
+    const reportCountdown = (remainingMs: number) => {
+      if (!this.orderWaitProgressReporter) {
+        return;
+      }
+
+      const remainingSeconds = Math.ceil(Math.max(remainingMs, 0) / 1000);
+      if (remainingSeconds <= 0 || remainingSeconds > nextCountdownSecond) {
+        return;
+      }
+
+      while (nextCountdownSecond > remainingSeconds) {
+        nextCountdownSecond -= 1;
+      }
+
+      this.orderWaitProgressReporter({ type: "countdown", remainingSeconds: nextCountdownSecond });
+
+      if (nextCountdownSecond <= 5) {
+        nextCountdownSecond = 0;
+        return;
+      }
+
+      if (nextCountdownSecond <= 10) {
+        nextCountdownSecond = 5;
+        return;
+      }
+
+      nextCountdownSecond = Math.floor((nextCountdownSecond - 1) / 5) * 5;
+    };
+
+    this.orderWaitProgressReporter?.({ type: "posted", timeInForce });
+    reportCountdown(waitMs);
+
+    while (true) {
+      try {
+        const order = await apiClient.getOrder(orderHash);
+        observedOrder = order;
+
+        if (isTerminalOrderStatus(parseClobStatus(order.status))) {
+          return {
+            observedOrder,
+            polled: true,
+            timedOut: false
+          };
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("MYRIAD API request failed (404)")) {
+          throw error;
+        }
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        return {
+          observedOrder,
+          polled: true,
+          timedOut: true
+        };
+      }
+
+      await sleep(Math.min(ORDER_STATUS_POLL_INTERVAL_MS, remainingMs));
+      reportCountdown(deadline - Date.now());
+    }
+  }
+
+  private buildSubmittedOrderTracking(params: {
+    orderHash: string;
+    order: ClobOrder;
+    timeInForce: ClobTimeInForce;
+    waitMs: number;
+    response: Record<string, unknown>;
+    observedOrder?: ClobOrderRecord;
+    polled: boolean;
+    timedOut: boolean;
+  }): Record<string, unknown> {
+    const responseStatus = parseClobStatus(params.response.status);
+    const observed = params.observedOrder ? deriveOrderCompletion(params.observedOrder) : undefined;
+
+    if (observed?.finalized) {
+      return {
+        waitMs: params.waitMs,
+        pollIntervalMs: params.polled ? ORDER_STATUS_POLL_INTERVAL_MS : 0,
+        polled: params.polled,
+        timedOut: false,
+        observedOrder: params.observedOrder,
+        observedStatus: observed.observedStatus ?? responseStatus,
+        finalized: true,
+        completion: observed.completion,
+        followUpCommand: `myriad ob orders show ${params.orderHash} --json`
+      };
+    }
+
+    if (params.timedOut) {
+      return {
+        waitMs: params.waitMs,
+        pollIntervalMs: ORDER_STATUS_POLL_INTERVAL_MS,
+        polled: true,
+        timedOut: true,
+        observedOrder: params.observedOrder,
+        observedStatus: observed?.observedStatus ?? responseStatus,
+        finalized: false,
+        completion: "pending_sync",
+        followUpCommand: `myriad ob orders show ${params.orderHash} --json`
+      };
+    }
+
+    if (params.polled) {
+      return {
+        waitMs: params.waitMs,
+        pollIntervalMs: ORDER_STATUS_POLL_INTERVAL_MS,
+        polled: true,
+        timedOut: false,
+        observedOrder: params.observedOrder,
+        observedStatus: observed?.observedStatus ?? responseStatus,
+        finalized: false,
+        completion: "pending_sync",
+        followUpCommand: `myriad ob orders show ${params.orderHash} --json`
+      };
+    }
+
+    const immediate = deriveOrderCompletion({
+      status: responseStatus,
+      order: params.order
+    });
+
+    return {
+      waitMs: params.waitMs,
+      pollIntervalMs: 0,
+      polled: false,
+      timedOut: false,
+      observedOrder: undefined,
+      observedStatus: immediate.observedStatus,
+      finalized: immediate.finalized,
+      completion:
+        params.waitMs === 0 && isImmediateTimeInForce(params.timeInForce) && !immediate.finalized
+          ? "pending_sync"
+          : immediate.completion,
+      followUpCommand: `myriad ob orders show ${params.orderHash} --json`
+    };
+  }
+
+  private async executePositionCalldata(
+    runtime: RuntimeConfig,
+    privateKey: string,
+    call: { to: string; calldata: string; value?: string }
+  ): Promise<unknown> {
+    const executionService = new EvmExecutionService({
+      rpcUrl: runtime.rpcUrl,
+      privateKey,
+      chainId: runtime.chainId
+    });
+
+    return executionService.sendContractCalldata({
+      to: call.to,
+      calldata: call.calldata,
+      valueWei: call.value
+    });
   }
 
   async listMarkets(input: ListMarketsInput = {}, overrides?: ApiRequestOverrides): Promise<unknown> {
@@ -483,22 +1201,140 @@ export class MyriadOperations {
     };
   }
 
-  async walletBalances(input: WalletBalancesInput = {}): Promise<unknown> {
-    const address = await this.resolveWalletAddress(this.runtime, input.address);
-    const service = new WalletBalanceService(this.runtime.rpcUrl);
+  async obMarketsList(input: ObMarketsListInput = {}, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
 
-    const native = await service.getNativeBalance(address, getNativeSymbol(this.runtime.chainId));
+    return apiClient.listMarkets({
+      state: input.state ?? "open",
+      network_id: parseMaybeInteger(input.networkId, "network-id") ?? runtime.chainId,
+      execution_mode: 1,
+      keyword: input.keyword,
+      sort: input.sort ?? "volume_24h",
+      order: input.order ?? "desc",
+      page: parseMaybeInteger(input.page, "page") ?? 1,
+      limit: parseMaybeInteger(input.limit, "limit") ?? 20
+    });
+  }
+
+  async obMarketsShow(
+    marketArgument: string | number,
+    input: { networkId?: string | number } = {},
+    overrides?: ApiRequestOverrides
+  ): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+
+    let market: Market;
+    if (typeof marketArgument === "number") {
+      market = await apiClient.getMarketById(
+        marketArgument,
+        parseMaybeInteger(input.networkId, "network-id") ?? runtime.chainId,
+        {
+          execution_mode: 1
+        }
+      );
+    } else {
+      const asNumber = Number.parseInt(marketArgument, 10);
+      if (!Number.isNaN(asNumber)) {
+        market = await apiClient.getMarketById(asNumber, parseMaybeInteger(input.networkId, "network-id") ?? runtime.chainId, {
+          execution_mode: 1
+        });
+      } else {
+        market = await apiClient.getMarketBySlug(marketArgument, {
+          execution_mode: 1
+        });
+      }
+    }
+
+    ensureNetworkMatch(market, runtime);
+    ensureOrderbookMarket(market);
+    return market;
+  }
+
+  async obMarketOrderbook(input: ObMarketBookInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+    const marketReference = resolveMarketReference(input, runtime.chainId);
+    const market = await resolveOrderbookMarket(apiClient, marketReference, runtime);
+    const outcomeId = parseMaybeInteger(input.outcomeId, "outcome-id") ?? 0;
+    if (outcomeId !== 0 && outcomeId !== 1) {
+      throw new Error("outcome-id must be 0 or 1.");
+    }
+
+    const orderbook = await apiClient.getMarketOrderbook(market.id, {
+      network_id: runtime.chainId,
+      outcome: outcomeId
+    });
+
+    return {
+      marketId: market.id,
+      marketTitle: market.title,
+      outcomeId,
+      ...orderbook
+    };
+  }
+
+  async obMarketTrades(input: ObMarketTradesInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+    const marketReference = resolveMarketReference(input, runtime.chainId);
+    const market = await resolveOrderbookMarket(apiClient, marketReference, runtime);
+    const outcomeId = parseMaybeInteger(input.outcomeId, "outcome-id");
+
+    const response = await apiClient.getMarketTrades(market.id, {
+      network_id: runtime.chainId,
+      outcome: outcomeId,
+      page: parseMaybeInteger(input.page, "page") ?? 1,
+      limit: parseMaybeInteger(input.limit, "limit") ?? 50
+    });
+
+    return {
+      marketId: market.id,
+      marketTitle: market.title,
+      outcomeId,
+      ...response
+    };
+  }
+
+  async obPositionsList(input: ObPositionsListInput = {}, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+    const address = await this.resolveWalletAddress(runtime, input.address);
+
+    const response = await apiClient.getPortfolio(address, {
+      execution_mode: 1,
+      network_id: runtime.chainId,
+      market_id: parseMaybeInteger(input.marketId, "market-id"),
+      market_slug: input.marketSlug,
+      token_address: input.tokenAddress,
+      page: parseMaybeInteger(input.page, "page") ?? 1,
+      limit: parseMaybeInteger(input.limit, "limit") ?? 20
+    });
+
+    return {
+      wallet: address,
+      ...response
+    };
+  }
+
+  async walletBalances(input: WalletBalancesInput = {}): Promise<unknown> {
+    const runtime = assertCollateralConfig(this.runtime);
+    const address = await this.resolveWalletAddress(runtime, input.address);
+    const service = new WalletBalanceService(runtime.rpcUrl);
+
+    const native = await service.getNativeBalance(address, getNativeSymbol(runtime.chainId));
 
     const tokenEntries: Array<{ label: string; address: string }> = [
-      { label: "collateral", address: this.runtime.collateralTokenAddress }
+      { label: "collateral", address: runtime.collateralTokenAddress }
     ];
 
-    if (this.runtime.chainId === 56) {
-      if (this.runtime.usdtTokenAddress) {
-        tokenEntries.push({ label: "usdt", address: this.runtime.usdtTokenAddress });
+    if (runtime.chainId === 56) {
+      if (runtime.usdtTokenAddress) {
+        tokenEntries.push({ label: "usdt", address: runtime.usdtTokenAddress });
       }
-      if (this.runtime.usd1TokenAddress) {
-        tokenEntries.push({ label: "usd1", address: this.runtime.usd1TokenAddress });
+      if (runtime.usd1TokenAddress) {
+        tokenEntries.push({ label: "usd1", address: runtime.usd1TokenAddress });
       }
     }
 
@@ -506,22 +1342,23 @@ export class MyriadOperations {
 
     return {
       wallet: address,
-      chainId: this.runtime.chainId,
+      chainId: runtime.chainId,
       native,
       tokens
     };
   }
 
   async walletDeposit(input: WalletDepositInput = {}): Promise<WalletDepositResult> {
-    const address = await this.resolveWalletAddress(this.runtime, input.address);
-    const nativeSymbol = getNativeSymbol(this.runtime.chainId);
-    const collateralSymbol = getCollateralSymbol(this.runtime);
-    const collateralAddress = utils.getAddress(this.runtime.collateralTokenAddress);
+    const runtime = assertCollateralConfig(this.runtime);
+    const address = await this.resolveWalletAddress(runtime, input.address);
+    const nativeSymbol = getNativeSymbol(runtime.chainId);
+    const collateralSymbol = getCollateralSymbol(runtime);
+    const collateralAddress = utils.getAddress(runtime.collateralTokenAddress);
 
     return {
       wallet: address,
-      chainId: this.runtime.chainId,
-      network: getNetworkName(this.runtime.chainId),
+      chainId: runtime.chainId,
+      network: getNetworkName(runtime.chainId),
       instructions: [
         `Send ${nativeSymbol} to ${address} for gas.`,
         `Send ${collateralSymbol} collateral token (${collateralAddress}) to ${address} for trading.`
@@ -535,6 +1372,609 @@ export class MyriadOperations {
           address: collateralAddress
         }
       }
+    };
+  }
+
+  private async placeObLimitOrder(
+    side: 0 | 1,
+    input: ObLimitOrderInput,
+    overrides?: ApiRequestOverrides
+  ): Promise<unknown> {
+    const runtime = ensureOrderbookRuntime(this.runtimeForApi(overrides));
+    const apiClient = this.createApiClient(overrides);
+    const marketReference = resolveMarketReference(input, runtime.chainId);
+    const market = await resolveOrderbookMarket(apiClient, marketReference, runtime);
+    const { privateKey, walletAddress } = await this.resolveOrderbookSigner(runtime);
+    const outcomeId = parseIntegerValue(input.outcomeId, "outcome-id");
+    if (outcomeId !== 0 && outcomeId !== 1) {
+      throw new Error("outcome-id must be 0 or 1.");
+    }
+
+    const sharesRaw = parseTokenUnits(input.shares, 18, "shares");
+    const priceRaw = parsePriceUnits(input.price);
+    const timeInForce = parseTimeInForce(input.timeInForce, "GTC", ["GTC", "GTD", "FOK", "FAK"]);
+    const waitMs = resolveOrderWaitMs(input.waitMs, timeInForce);
+    const expiration = resolveExpiration(timeInForce, input.expiration);
+    const minFillAmountRaw =
+      input.minFillShares !== undefined ? parseTokenUnits(input.minFillShares, 18, "min-fill-shares") : "0";
+
+    if (BigNumber.from(minFillAmountRaw).gt(BigNumber.from(sharesRaw))) {
+      throw new Error("min-fill-shares cannot be greater than shares.");
+    }
+
+    const order = createClobOrder({
+      trader: walletAddress,
+      marketId: market.id,
+      outcomeId,
+      side,
+      amountRaw: sharesRaw,
+      priceRaw,
+      minFillAmountRaw,
+      expiration
+    });
+    const { signature, orderHash } = await signClobOrder(privateKey, runtime, order);
+    const collateralTokenAddress = market.token?.address ?? runtime.collateralTokenAddress;
+    const collateralDecimals = getMarketCollateralDecimals(market);
+    const allowancePreference = this.resolveEffectiveAllowancePreference(input.allowance);
+    const requiredBuyApprovalRaw = estimateBuyCollateralApproval(BigNumber.from(order.amount), BigNumber.from(order.price));
+    const requiredBuyApprovalAmount = formatRawUnits(requiredBuyApprovalRaw, collateralDecimals);
+    const approvalPreview =
+      side === 0
+        ? {
+            type: "erc20_allowance",
+            tokenAddress: collateralTokenAddress,
+            spenderAddress: runtime.obExchangeAddress,
+            requiredAmountRaw: requiredBuyApprovalRaw.toString(),
+            requiredAmount: requiredBuyApprovalAmount,
+            allowancePreference
+          }
+        : {
+            type: "erc1155_approval_for_all",
+            tokenAddress: runtime.obConditionalTokens,
+            operatorAddress: runtime.obExchangeAddress
+          };
+
+    const submission = {
+      order,
+      signature,
+      network_id: runtime.chainId,
+      time_in_force: timeInForce
+    };
+
+    if (input.dryRun) {
+      return {
+        wallet: walletAddress,
+        executionMode: "orderbook",
+        marketId: market.id,
+        marketTitle: market.title,
+        outcomeId,
+        side: getClobSideLabel(side),
+        timeInForce,
+        order,
+        orderHash,
+        signature,
+        submission,
+        approval: approvalPreview
+      };
+    }
+
+    const executionService = new EvmExecutionService({
+      rpcUrl: runtime.rpcUrl,
+      privateKey,
+      chainId: runtime.chainId
+    });
+
+    const approval =
+      input.skipApproval === true
+        ? { approved: true, skipped: true }
+        : side === 0
+          ? await executionService.ensureErc20Allowance({
+              tokenAddress: collateralTokenAddress,
+              spenderAddress: runtime.obExchangeAddress,
+              requiredAmount: requiredBuyApprovalAmount,
+              allowancePreference
+            })
+          : await executionService.ensureErc1155ApprovalForAll({
+              tokenAddress: runtime.obConditionalTokens,
+              operatorAddress: runtime.obExchangeAddress
+            });
+
+    const response = await apiClient.createOrder(submission);
+    const observation = await this.waitForSubmittedOrder(apiClient, orderHash, waitMs, timeInForce);
+
+    return {
+      wallet: walletAddress,
+      executionMode: "orderbook",
+      marketId: market.id,
+      marketTitle: market.title,
+      outcomeId,
+      side: getClobSideLabel(side),
+      timeInForce,
+      order,
+      orderHash,
+      signature,
+      approval,
+      response,
+      submission: response,
+      ...this.buildSubmittedOrderTracking({
+        orderHash,
+        order,
+        timeInForce,
+        waitMs,
+        response,
+        observedOrder: observation.observedOrder,
+        polled: observation.polled,
+        timedOut: observation.timedOut
+      })
+    };
+  }
+
+  private async placeObMarketOrder(
+    side: 0 | 1,
+    input: ObMarketOrderInput,
+    overrides?: ApiRequestOverrides
+  ): Promise<unknown> {
+    if ((input.shares !== undefined && input.value !== undefined) || (input.shares === undefined && input.value === undefined)) {
+      throw new Error("Provide exactly one of --shares or --value for market orders.");
+    }
+
+    const runtime = ensureOrderbookRuntime(this.runtimeForApi(overrides));
+    const apiClient = this.createApiClient(overrides);
+    const marketReference = resolveMarketReference(input, runtime.chainId);
+    const market = await resolveOrderbookMarket(apiClient, marketReference, runtime);
+    const { privateKey, walletAddress } = await this.resolveOrderbookSigner(runtime);
+    const outcomeId = parseIntegerValue(input.outcomeId, "outcome-id");
+    if (outcomeId !== 0 && outcomeId !== 1) {
+      throw new Error("outcome-id must be 0 or 1.");
+    }
+
+    const collateralDecimals = getMarketCollateralDecimals(market);
+    const timeInForce = parseTimeInForce(input.timeInForce, "FAK", ["FAK", "FOK"]);
+    const waitMs = resolveOrderWaitMs(input.waitMs, timeInForce);
+    const requestedSharesRaw = input.shares !== undefined ? parseTokenUnits(input.shares, 18, "shares") : undefined;
+    const requestedValueRaw = input.value !== undefined ? parseTokenUnits(input.value, collateralDecimals, "value") : undefined;
+    const orderbook = await apiClient.getMarketOrderbook(market.id, {
+      network_id: runtime.chainId,
+      outcome: outcomeId
+    });
+    const walk = walkOrderbook({
+      side: getClobSideLabel(side),
+      levels: getOrderbookSide(side === 0, orderbook),
+      requestedSharesRaw,
+      requestedValueRaw
+    });
+
+    if (requestedValueRaw && walk.shortfallValueRaw) {
+      throw new Error("Insufficient orderbook depth to derive a market order from the requested value.");
+    }
+    if (requestedSharesRaw && timeInForce === "FOK" && walk.shortfallSharesRaw) {
+      throw new Error("Insufficient orderbook depth to fully fill the requested shares with time-in-force FOK.");
+    }
+
+    const amountRaw = requestedSharesRaw ?? walk.estimatedSharesRaw;
+    const order = createClobOrder({
+      trader: walletAddress,
+      marketId: market.id,
+      outcomeId,
+      side,
+      amountRaw,
+      priceRaw: walk.deepestPriceRaw,
+      expiration: "0"
+    });
+    const { signature, orderHash } = await signClobOrder(privateKey, runtime, order);
+    const collateralTokenAddress = market.token?.address ?? runtime.collateralTokenAddress;
+    const allowancePreference = this.resolveEffectiveAllowancePreference(input.allowance);
+    const estimatedBuyApprovalRaw = estimateBuyCollateralApproval(BigNumber.from(order.amount), BigNumber.from(order.price));
+    const estimatedBuyApprovalAmount = formatRawUnits(estimatedBuyApprovalRaw, collateralDecimals);
+    const approvalPreview =
+      side === 0
+        ? {
+            type: "erc20_allowance",
+            tokenAddress: collateralTokenAddress,
+            spenderAddress: runtime.obExchangeAddress,
+            requiredAmountRaw: estimatedBuyApprovalRaw.toString(),
+            requiredAmount: estimatedBuyApprovalAmount,
+            allowancePreference
+          }
+        : {
+            type: "erc1155_approval_for_all",
+            tokenAddress: runtime.obConditionalTokens,
+            operatorAddress: runtime.obExchangeAddress
+          };
+
+    const submission = {
+      order,
+      signature,
+      network_id: runtime.chainId,
+      time_in_force: timeInForce
+    };
+    const marketQuote = {
+      inputMode: requestedSharesRaw ? "shares" : "value",
+      requestedSharesRaw,
+      requestedValueRaw,
+      estimatedSharesRaw: walk.estimatedSharesRaw,
+      estimatedValueRaw: walk.estimatedValueRaw,
+      deepestPriceRaw: walk.deepestPriceRaw,
+      shortfallSharesRaw: walk.shortfallSharesRaw,
+      shortfallValueRaw: walk.shortfallValueRaw,
+      levels: walk.levels,
+      note:
+        requestedValueRaw !== undefined
+          ? "Derived from the current book snapshot. Realized fill can differ because CLOB market orders are synthesized from share-based limit orders."
+          : undefined
+    };
+
+    if (input.dryRun) {
+      return {
+        wallet: walletAddress,
+        executionMode: "orderbook",
+        marketId: market.id,
+        marketTitle: market.title,
+        outcomeId,
+        side: getClobSideLabel(side),
+        timeInForce,
+        order,
+        orderHash,
+        signature,
+        submission,
+        marketQuote,
+        approval: approvalPreview
+      };
+    }
+
+    const executionService = new EvmExecutionService({
+      rpcUrl: runtime.rpcUrl,
+      privateKey,
+      chainId: runtime.chainId
+    });
+
+    const approval =
+      input.skipApproval === true
+        ? { approved: true, skipped: true }
+        : side === 0
+          ? await executionService.ensureErc20Allowance({
+              tokenAddress: collateralTokenAddress,
+              spenderAddress: runtime.obExchangeAddress,
+              requiredAmount: estimatedBuyApprovalAmount,
+              allowancePreference
+            })
+          : await executionService.ensureErc1155ApprovalForAll({
+              tokenAddress: runtime.obConditionalTokens,
+              operatorAddress: runtime.obExchangeAddress
+            });
+
+    const response = await apiClient.createOrder(submission);
+    const observation = await this.waitForSubmittedOrder(apiClient, orderHash, waitMs, timeInForce);
+
+    return {
+      wallet: walletAddress,
+      executionMode: "orderbook",
+      marketId: market.id,
+      marketTitle: market.title,
+      outcomeId,
+      side: getClobSideLabel(side),
+      timeInForce,
+      order,
+      orderHash,
+      signature,
+      marketQuote,
+      approval,
+      response,
+      submission: response,
+      ...this.buildSubmittedOrderTracking({
+        orderHash,
+        order,
+        timeInForce,
+        waitMs,
+        response,
+        observedOrder: observation.observedOrder,
+        polled: observation.polled,
+        timedOut: observation.timedOut
+      })
+    };
+  }
+
+  async obLimitBuy(input: ObLimitOrderInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    return this.placeObLimitOrder(0, input, overrides);
+  }
+
+  async obLimitSell(input: ObLimitOrderInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    return this.placeObLimitOrder(1, input, overrides);
+  }
+
+  async obMarketBuy(input: ObMarketOrderInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    return this.placeObMarketOrder(0, input, overrides);
+  }
+
+  async obMarketSell(input: ObMarketOrderInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    return this.placeObMarketOrder(1, input, overrides);
+  }
+
+  async obOrdersList(input: ObOrdersListInput = {}, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+    const trader = await this.resolveWalletAddress(runtime, input.trader);
+    const response = await apiClient.listOrders({
+      trader,
+      network_id: parseMaybeInteger(input.networkId, "network-id") ?? runtime.chainId,
+      market_id: parseMaybeInteger(input.marketId, "market-id"),
+      status: input.status,
+      limit: parseMaybeInteger(input.limit, "limit") ?? 50,
+      offset: parseMaybeInteger(input.offset, "offset") ?? 0
+    });
+
+    return {
+      trader,
+      ...response
+    };
+  }
+
+  async obOrdersShow(input: ObOrderShowInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const apiClient = this.createApiClient(overrides);
+    return apiClient.getOrder(input.orderHash);
+  }
+
+  async obOrdersCancel(input: ObOrderCancelInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+    const walletAddress = await this.resolveWalletAddress(runtime);
+    const existingOrder = await apiClient.getOrder(input.orderHash);
+    const traderAddress = existingOrder.order?.trader;
+
+    if (!traderAddress || !isSameAddress(traderAddress, walletAddress)) {
+      throw new Error(`Configured wallet ${walletAddress} does not own order ${input.orderHash}.`);
+    }
+
+    const cancelRequest = buildClobCancelRequest(existingOrder, runtime.chainId);
+
+    if (input.dryRun) {
+      return {
+        wallet: walletAddress,
+        orderHash: input.orderHash,
+        cancelRequest,
+        existingOrder
+      };
+    }
+
+    const response = await apiClient.cancelOrder(input.orderHash, cancelRequest);
+    return {
+      wallet: walletAddress,
+      orderHash: input.orderHash,
+      response
+    };
+  }
+
+  async obOrdersCancelAll(input: ObOrderCancelAllInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+    const walletAddress = await this.resolveWalletAddress(runtime);
+    const marketReference = resolveMarketReference(input, runtime.chainId);
+    const market = await resolveOrderbookMarket(apiClient, marketReference, runtime);
+    const pageSize = 100;
+    let offset = 0;
+    const openOrders: ClobOrderRecord[] = [];
+
+    while (true) {
+      const response = await apiClient.listOrders({
+        trader: walletAddress,
+        network_id: runtime.chainId,
+        market_id: market.id,
+        status: "open",
+        limit: pageSize,
+        offset
+      });
+      const page = response.data.filter((record) => {
+        const traderAddress = record.order?.trader;
+        return traderAddress ? isSameAddress(traderAddress, walletAddress) : true;
+      });
+
+      openOrders.push(...page);
+
+      const hasNextPage = response.pagination?.hasNext === true || response.data.length === pageSize;
+      if (!hasNextPage || response.data.length === 0) {
+        break;
+      }
+      offset += response.data.length;
+    }
+
+    const cancelRequests = openOrders.map((record) => ({
+      orderHash: record.orderHash,
+      cancelRequest: buildClobCancelRequest(record, runtime.chainId)
+    }));
+
+    if (input.dryRun) {
+      return {
+        wallet: walletAddress,
+        marketId: market.id,
+        marketTitle: market.title,
+        totalOpenOrders: openOrders.length,
+        cancelRequests,
+        dryRun: true
+      };
+    }
+
+    const results: Array<{ orderHash: string; ok: boolean; response?: Record<string, unknown>; error?: string }> = [];
+
+    for (const request of cancelRequests) {
+      try {
+        const response = await apiClient.cancelOrder(request.orderHash, request.cancelRequest);
+        results.push({
+          orderHash: request.orderHash,
+          ok: true,
+          response
+        });
+      } catch (error) {
+        results.push({
+          orderHash: request.orderHash,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    return {
+      wallet: walletAddress,
+      marketId: market.id,
+      marketTitle: market.title,
+      totalOpenOrders: openOrders.length,
+      cancelled: results.filter((result) => result.ok).length,
+      failed: results.filter((result) => !result.ok).length,
+      results,
+      dryRun: false
+    };
+  }
+
+  async obPositionsSplit(input: ObPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = ensureOrderbookRuntime(this.runtimeForApi(overrides));
+    const apiClient = this.createApiClient(overrides);
+    const marketReference = resolveMarketReference(input, runtime.chainId);
+    const market = await resolveOrderbookMarket(apiClient, marketReference, runtime);
+    const collateralDecimals = getMarketCollateralDecimals(market);
+    const amountRaw = parseTokenUnits(input.amount, collateralDecimals, "amount");
+    const privateKey = await this.resolveSignerPrivateKey(runtime);
+    const walletAddress = new Wallet(privateKey).address;
+    const approvalPreview = {
+      type: "erc20_allowance",
+      tokenAddress: market.token?.address ?? runtime.collateralTokenAddress,
+      spenderAddress: runtime.obConditionalTokens,
+      requiredAmountRaw: amountRaw,
+      requiredAmount: formatRawUnits(BigNumber.from(amountRaw), collateralDecimals),
+      allowancePreference: this.resolveEffectiveAllowancePreference(input.allowance)
+    };
+
+    const call = await apiClient.splitPosition({
+      market_id: market.id,
+      amount: amountRaw,
+      network_id: runtime.chainId
+    });
+
+    if (input.dryRun) {
+      return {
+        wallet: walletAddress,
+        marketId: market.id,
+        marketTitle: market.title,
+        amountRaw,
+        approval: approvalPreview,
+        call
+      };
+    }
+
+    const executionService = new EvmExecutionService({
+      rpcUrl: runtime.rpcUrl,
+      privateKey,
+      chainId: runtime.chainId
+    });
+
+    const approval =
+      input.skipApproval === true
+        ? { approved: true, skipped: true }
+        : await executionService.ensureErc20Allowance({
+            tokenAddress: approvalPreview.tokenAddress,
+            spenderAddress: runtime.obConditionalTokens,
+            requiredAmount: approvalPreview.requiredAmount,
+            allowancePreference: approvalPreview.allowancePreference
+          });
+
+    const execution = await this.executePositionCalldata(runtime, privateKey, call);
+
+    return {
+      wallet: walletAddress,
+      marketId: market.id,
+      marketTitle: market.title,
+      amountRaw,
+      approval,
+      call,
+      execution
+    };
+  }
+
+  async obPositionsMerge(input: ObPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = ensureOrderbookRuntime(this.runtimeForApi(overrides));
+    const apiClient = this.createApiClient(overrides);
+    const marketReference = resolveMarketReference(input, runtime.chainId);
+    const market = await resolveOrderbookMarket(apiClient, marketReference, runtime);
+    const collateralDecimals = getMarketCollateralDecimals(market);
+    const amountRaw = parseTokenUnits(input.amount, collateralDecimals, "amount");
+    const privateKey = await this.resolveSignerPrivateKey(runtime);
+    const walletAddress = new Wallet(privateKey).address;
+    const call = await apiClient.mergePosition({
+      market_id: market.id,
+      amount: amountRaw,
+      network_id: runtime.chainId
+    });
+
+    if (input.dryRun) {
+      return {
+        wallet: walletAddress,
+        marketId: market.id,
+        marketTitle: market.title,
+        amountRaw,
+        call
+      };
+    }
+
+    const execution = await this.executePositionCalldata(runtime, privateKey, call);
+    return {
+      wallet: walletAddress,
+      marketId: market.id,
+      marketTitle: market.title,
+      amountRaw,
+      call,
+      execution
+    };
+  }
+
+  async obPositionsRedeem(input: ObPositionRedeemInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = ensureOrderbookRuntime(this.runtimeForApi(overrides));
+    const apiClient = this.createApiClient(overrides);
+    const marketReference = resolveMarketReference(input, runtime.chainId);
+    const market = await resolveOrderbookMarket(apiClient, marketReference, runtime);
+    const privateKey = await this.resolveSignerPrivateKey(runtime);
+    const walletAddress = new Wallet(privateKey).address;
+    const executionService = new EvmExecutionService({
+      rpcUrl: runtime.rpcUrl,
+      privateKey,
+      chainId: runtime.chainId
+    });
+    const resolvedOutcome = await executionService.getResolvedOutcome(runtime.obManager, market.id);
+
+    if (resolvedOutcome === -2) {
+      throw new Error(`Market ${market.id} is unresolved and cannot be redeemed yet.`);
+    }
+
+    const redeemPath = resolvedOutcome === -1 ? "redeem-voided" : "redeem";
+    const call =
+      redeemPath === "redeem-voided"
+        ? await apiClient.redeemVoidedPosition({
+            market_id: market.id,
+            network_id: runtime.chainId
+          })
+        : await apiClient.redeemPosition({
+            market_id: market.id,
+            network_id: runtime.chainId
+          });
+
+    if (input.dryRun) {
+      return {
+        wallet: walletAddress,
+        marketId: market.id,
+        marketTitle: market.title,
+        resolvedOutcome,
+        redeemPath,
+        call
+      };
+    }
+
+    const execution = await this.executePositionCalldata(runtime, privateKey, call);
+
+    return {
+      wallet: walletAddress,
+      marketId: market.id,
+      marketTitle: market.title,
+      resolvedOutcome,
+      redeemPath,
+      call,
+      execution
     };
   }
 
@@ -594,7 +2034,7 @@ export class MyriadOperations {
   }
 
   async tradeBuy(input: TradeBuyInput, overrides?: ApiRequestOverrides): Promise<unknown> {
-    const runtime = this.runtimeForApi(overrides);
+    const runtime = assertAmmConfig(this.runtimeForApi(overrides));
     const privateKey = await this.resolveSignerPrivateKey(runtime);
     const apiClient = this.createApiClient(overrides);
 
@@ -724,7 +2164,7 @@ export class MyriadOperations {
       throw new Error("Provide exactly one of --value or --shares for sell.");
     }
 
-    const runtime = this.runtimeForApi(overrides);
+    const runtime = assertAmmConfig(this.runtimeForApi(overrides));
     const privateKey = await this.resolveSignerPrivateKey(runtime);
     const apiClient = this.createApiClient(overrides);
 
@@ -779,7 +2219,7 @@ export class MyriadOperations {
     overrides?: ApiRequestOverrides,
     expectAction?: "claim_winnings" | "claim_voided"
   ): Promise<unknown> {
-    const runtime = this.runtimeForApi(overrides);
+    const runtime = assertAmmConfig(this.runtimeForApi(overrides));
     const privateKey = await this.resolveSignerPrivateKey(runtime);
     const apiClient = this.createApiClient(overrides);
 
@@ -837,7 +2277,7 @@ export class MyriadOperations {
   }
 
   async claimAll(input: ClaimAllInput = {}, overrides?: ApiRequestOverrides): Promise<unknown> {
-    const runtime = this.runtimeForApi(overrides);
+    const runtime = assertAmmConfig(this.runtimeForApi(overrides));
     const privateKey = await this.resolveSignerPrivateKey(runtime);
     const apiClient = this.createApiClient(overrides);
 

@@ -8,6 +8,13 @@ const ERC20_ALLOWANCE_ABI = [
   "function approve(address spender, uint256 amount) returns (bool)"
 ];
 
+const ERC1155_APPROVAL_ABI = [
+  "function isApprovedForAll(address account, address operator) view returns (bool)",
+  "function setApprovalForAll(address operator, bool approved)"
+];
+
+const ORDERBOOK_MANAGER_ABI = ["function getMarketResolvedOutcome(uint256 marketId) view returns (int8)"];
+
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
     return error.message;
@@ -68,7 +75,7 @@ export class EvmExecutionService {
 
   private async getNativeSymbol(): Promise<string> {
     const network = await this.provider.getNetwork();
-    if (network.chainId === 56) {
+    if (network.chainId === 56 || network.chainId === 97) {
       return "BNB";
     }
     return "NATIVE";
@@ -114,6 +121,49 @@ export class EvmExecutionService {
         throw new Error("Approval transaction reverted after sending with manual gas limit.");
       }
       return tx.hash;
+    }
+  }
+
+  private async sendApprovalForAll(token: Contract, operatorAddress: string): Promise<string> {
+    try {
+      const estimatedGas = (await token.estimateGas.setApprovalForAll(operatorAddress, true)) as BigNumber;
+      const tx = await token.setApprovalForAll(operatorAddress, true, {
+        gasLimit: estimatedGas.mul(12).div(10)
+      });
+      const receipt = await tx.wait();
+      if (receipt?.status === 0) {
+        throw new Error("setApprovalForAll transaction reverted.");
+      }
+      return tx.hash;
+    } catch (error) {
+      const reason = extractErrorMessage(error);
+      const estimateFailed =
+        reason.includes("UNPREDICTABLE_GAS_LIMIT") ||
+        reason.includes("cannot estimate gas") ||
+        reason.includes("gas required exceeds allowance");
+
+      if (!estimateFailed) {
+        throw error;
+      }
+
+      const tx = await token.setApprovalForAll(operatorAddress, true, {
+        gasLimit: 140_000
+      });
+      const receipt = await tx.wait();
+      if (receipt?.status === 0) {
+        throw new Error("setApprovalForAll reverted after sending with manual gas limit.");
+      }
+      return tx.hash;
+    }
+  }
+
+  async getTokenDecimals(tokenAddress: string, fallback = 18): Promise<number> {
+    try {
+      const token = new Contract(utils.getAddress(tokenAddress), ERC20_ALLOWANCE_ABI, this.provider);
+      const decimalsRaw = await token.decimals();
+      return Number(decimalsRaw);
+    } catch {
+      return fallback;
     }
   }
 
@@ -220,6 +270,60 @@ export class EvmExecutionService {
           `Reset-then-approve reason: ${resetReason}.`
       );
     }
+  }
+
+  async ensureErc1155ApprovalForAll(params: {
+    tokenAddress: string;
+    operatorAddress: string;
+  }): Promise<{
+    approved: boolean;
+    currentApproval: boolean;
+    approvalTxHash?: string;
+  }> {
+    await this.assertChain();
+
+    const token = new Contract(utils.getAddress(params.tokenAddress), ERC1155_APPROVAL_ABI, this.wallet);
+    const currentApproval = Boolean(
+      await token.isApprovedForAll(this.wallet.address, utils.getAddress(params.operatorAddress))
+    );
+
+    if (currentApproval) {
+      return {
+        approved: true,
+        currentApproval
+      };
+    }
+
+    try {
+      const approvalTxHash = await this.sendApprovalForAll(token, utils.getAddress(params.operatorAddress));
+      return {
+        approved: false,
+        currentApproval,
+        approvalTxHash
+      };
+    } catch (error) {
+      const reason = extractErrorMessage(error);
+      if (reason.toLowerCase().includes("insufficient funds")) {
+        const [nativeBalanceRaw, nativeSymbol] = await Promise.all([
+          this.provider.getBalance(this.wallet.address),
+          this.getNativeSymbol()
+        ]);
+        throw new Error(
+          `Insufficient ${nativeSymbol} for ERC1155 approval transaction. ` +
+            `Wallet balance: ${utils.formatEther(nativeBalanceRaw)} ${nativeSymbol}. ` +
+            `RPC reason: ${reason}.`
+        );
+      }
+
+      throw new Error(`Failed to approve ERC1155 operator. Reason: ${reason}`);
+    }
+  }
+
+  async getResolvedOutcome(managerAddress: string, marketId: number): Promise<number> {
+    await this.assertChain();
+    const manager = new Contract(utils.getAddress(managerAddress), ORDERBOOK_MANAGER_ABI, this.provider);
+    const result = await manager.getMarketResolvedOutcome(marketId);
+    return Number(result);
   }
 
   async sendContractCalldata(params: {

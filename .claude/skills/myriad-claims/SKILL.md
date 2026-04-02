@@ -1,6 +1,6 @@
 ---
 name: myriad-claims
-description: Execute claim workflows on Myriad for winnings and voided outcomes. Use when tasks include claim winnings, claim voided, claim all, claim dry-runs, outcome-id handling for voided markets, or portfolio-based claim scanning and execution.
+description: Execute AMM/general claim workflows on Myriad for winnings and voided outcomes. Use when tasks include claim winnings, claim voided, claim all, claim dry-runs, outcome-id handling for voided markets, or portfolio-based claim scanning and execution outside the order book redeem flow.
 user-invocable: true
 allowed-tools: Bash(myriad claim *), Bash(myriad wallet balances *)
 ---
@@ -10,6 +10,8 @@ allowed-tools: Bash(myriad claim *), Bash(myriad wallet balances *)
 ## Overview
 
 Use this skill to settle claimable positions with explicit control over winnings, voided outcomes, and bulk claim scans.
+
+For order book settlement, do not use `claim ...`. Hand off to `/myriad-orderbook` and use `myriad ob positions redeem`.
 
 ## Claim Workflow
 
@@ -68,6 +70,7 @@ If `--wallet` is passed, it must match signer wallet context.
 
 ## Boundaries
 
+- Do not use this skill for Order Book settlement; hand off to `/myriad-orderbook`.
 - Do not perform new market discovery logic here; hand off to `/myriad-market-discovery`.
 - Do not troubleshoot keychain storage internals here; hand off to `/myriad-wallet-ops`.
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Myriad Trade Execution"
-  short_description: "Run safe Myriad buy and sell flows"
-  default_prompt: "Use $myriad-trade-execution to run safe preflight checks and execute buy/sell flows on Myriad."
+  short_description: "Run safe AMM buy and sell flows"
+  default_prompt: "Use $myriad-trade-execution for `myriad trade ...` AMM execution and route `myriad ob ...` workflows to $myriad-orderbook."

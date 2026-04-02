@@ -39,6 +39,54 @@ function createOperationsStub(overrides = {}) {
     async claimAll() {
       return { ok: true };
     },
+    async obMarketsList() {
+      return { ok: true };
+    },
+    async obMarketsShow() {
+      return { ok: true };
+    },
+    async obMarketOrderbook() {
+      return { ok: true };
+    },
+    async obMarketTrades() {
+      return { ok: true };
+    },
+    async obLimitBuy() {
+      return { ok: true };
+    },
+    async obLimitSell() {
+      return { ok: true };
+    },
+    async obMarketBuy() {
+      return { ok: true };
+    },
+    async obMarketSell() {
+      return { ok: true };
+    },
+    async obOrdersList() {
+      return { ok: true };
+    },
+    async obOrdersShow() {
+      return { ok: true };
+    },
+    async obOrdersCancel() {
+      return { ok: true };
+    },
+    async obOrdersCancelAll() {
+      return { ok: true };
+    },
+    async obPositionsList() {
+      return { ok: true };
+    },
+    async obPositionsSplit() {
+      return { ok: true };
+    },
+    async obPositionsMerge() {
+      return { ok: true };
+    },
+    async obPositionsRedeem() {
+      return { ok: true };
+    },
     ...overrides
   };
 }
@@ -110,6 +158,124 @@ test("markets_list maps tool args and API overrides", async () => {
   });
   assert.deepEqual(capturedOverrides, {
     apiBaseUrl: "https://api-v2.myriadprotocol.com/",
+    apiKey: "override-key"
+  });
+});
+
+test("ob_positions_list maps tool args and API overrides", async () => {
+  let capturedInput;
+  let capturedOverrides;
+
+  const operations = createOperationsStub({
+    async obPositionsList(input, apiOverrides) {
+      capturedInput = input;
+      capturedOverrides = apiOverrides;
+      return { data: [] };
+    }
+  });
+
+  await withInMemoryClient(operations, async (client) => {
+    const result = await client.callTool({
+      name: "ob_positions_list",
+      arguments: {
+        address: "0xabc",
+        marketId: 42,
+        page: 2,
+        limit: 5,
+        apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+        apiKey: "override-key"
+      }
+    });
+
+    assert.notEqual(result.isError, true);
+  });
+
+  assert.deepEqual(capturedInput, {
+    address: "0xabc",
+    marketId: 42,
+    page: 2,
+    limit: 5
+  });
+  assert.deepEqual(capturedOverrides, {
+    apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+    apiKey: "override-key"
+  });
+});
+
+test("ob_orders_cancel_all maps tool args and API overrides", async () => {
+  let capturedInput;
+  let capturedOverrides;
+
+  const operations = createOperationsStub({
+    async obOrdersCancelAll(input, apiOverrides) {
+      capturedInput = input;
+      capturedOverrides = apiOverrides;
+      return { ok: true };
+    }
+  });
+
+  await withInMemoryClient(operations, async (client) => {
+    const result = await client.callTool({
+      name: "ob_orders_cancel_all",
+      arguments: {
+        marketSlug: "test-market",
+        dryRun: true,
+        apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+        apiKey: "override-key"
+      }
+    });
+
+    assert.notEqual(result.isError, true);
+  });
+
+  assert.deepEqual(capturedInput, {
+    marketSlug: "test-market",
+    dryRun: true
+  });
+  assert.deepEqual(capturedOverrides, {
+    apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+    apiKey: "override-key"
+  });
+});
+
+test("ob_market_buy maps waitMs and API overrides", async () => {
+  let capturedInput;
+  let capturedOverrides;
+
+  const operations = createOperationsStub({
+    async obMarketBuy(input, apiOverrides) {
+      capturedInput = input;
+      capturedOverrides = apiOverrides;
+      return { ok: true };
+    }
+  });
+
+  await withInMemoryClient(operations, async (client) => {
+    const result = await client.callTool({
+      name: "ob_market_buy",
+      arguments: {
+        marketId: 42,
+        outcomeId: 0,
+        shares: "2",
+        waitMs: 2500,
+        dryRun: true,
+        apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+        apiKey: "override-key"
+      }
+    });
+
+    assert.notEqual(result.isError, true);
+  });
+
+  assert.deepEqual(capturedInput, {
+    marketId: 42,
+    outcomeId: 0,
+    shares: "2",
+    waitMs: 2500,
+    dryRun: true
+  });
+  assert.deepEqual(capturedOverrides, {
+    apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
     apiKey: "override-key"
   });
 });

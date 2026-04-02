@@ -9,6 +9,7 @@ Myriad CLI gives one interface for the full loop: discover markets, make decisio
 - **Discover** live opportunities across open markets using sorting and keyword search.
 - **Decide** with fast market inspection and portfolio context.
 - **Execute** buys and sells.
+- **Trade markets** on AMM and Order Book with discovery, limit orders, market orders, and position management.
 - **Claim** winnings.
 - **Automate** the full workflow through MCP tool orchestration.
 
@@ -44,6 +45,13 @@ Buy a position:
 
 ```bash
 myriad trade buy --market-id 164 --outcome-id 0 --value 25 --json
+```
+
+Trade on the order book (BNB Smart Chain only):
+
+```bash
+myriad ob markets list --json
+myriad ob limit buy --market-id 42 --outcome-id 0 --price 0.55 --shares 2 --dry-run --json
 ```
 
 Use the `--dry-run` flag to preview trades without executing them.
@@ -85,7 +93,22 @@ Go deeper:
 - [Wallet ops skill](skills/myriad-wallet-ops/SKILL.md)
 - [Market discovery skill](skills/myriad-market-discovery/SKILL.md)
 
-### 3) Winnings sweeper agent
+### 3) Order Book Trader Agent
+
+Your agent discovers Order Book markets, inspects depth, stages limit orders, and manages positions.
+
+```bash
+myriad ob markets list --json
+myriad ob markets orderbook --market-id 42 --outcome-id 0 --render
+myriad ob limit buy --market-id 42 --outcome-id 0 --price 0.55 --shares 2 --dry-run --json
+```
+
+Go deeper:
+
+- [Order book skill](skills/myriad-orderbook/SKILL.md)
+- [Wallet ops skill](skills/myriad-wallet-ops/SKILL.md)
+
+### 4) Winnings sweeper agent
 
 Your agent regularly sweeps resolved positions and claims winnings.
 
@@ -98,7 +121,7 @@ Go deeper:
 
 - [Claims skill](skills/myriad-claims/SKILL.md)
 
-### 4) Multi-Agent Trading Desk (MCP)
+### 5) Multi-Agent Trading Desk (MCP)
 
 One scout agent reads markets, another agent trades.
 
@@ -133,13 +156,29 @@ Safe rule for every agent:
 
 ## Command Map
 
-Core command groups: `markets` -> `trade` -> `claim` -> `wallet` -> `swap` -> `skills` -> `mcp`
+Core command groups: `markets` -> `trade` -> `ob` -> `claim` -> `wallet` -> `swap` -> `skills` -> `mcp`
+
+## Order Book
+
+The `ob` command group targets Myriad's order book deployment on BNB Smart Chain and supports USD1 markets only.
+
+```bash
+myriad ob markets list --json
+myriad ob markets orderbook --market-id 42 --outcome-id 0 --json
+myriad ob limit buy --market-id 42 --outcome-id 0 --price 0.55 --shares 5 --json
+myriad ob market sell --market-id 42 --outcome-id 1 --shares 2 --dry-run --json
+myriad ob orders list --json
+myriad ob positions list --json
+myriad ob positions split --market-id 42 --amount 10 --dry-run --json
+myriad ob positions redeem --market-id 42 --dry-run --json
+```
 
 ## Skills
 
 | Skill | Owns |
 | --- | --- |
 | [myriad-market-discovery](skills/myriad-market-discovery/SKILL.md) | Market scanning, filtering, and candidate selection |
+| [myriad-orderbook](skills/myriad-orderbook/SKILL.md) | Order book discovery, depth inspection, limit/market orders, order management, and positions |
 | [myriad-trade-execution](skills/myriad-trade-execution/SKILL.md) | Buy/sell execution patterns, slippage and allowance strategy |
 | [myriad-claims](skills/myriad-claims/SKILL.md) | Winnings, voided claims, and claim-all workflows |
 | [myriad-wallet-ops](skills/myriad-wallet-ops/SKILL.md) | Wallet onboarding, signer resolution, keychain issues |
@@ -180,13 +219,23 @@ myriad skills install --target openclaw
 
 This copies skills to `~/.openclaw/skills/` where OpenClaw auto-discovers them. Each skill requires the `myriad` binary on PATH.
 
-### Install Both
+### Codex
+
+Install skills globally:
+
+```bash
+myriad skills install --target codex
+```
+
+This copies skills to `$CODEX_HOME/skills/` when `CODEX_HOME` is set, otherwise to `~/.codex/skills/`. Codex uses the `skills/` tree, including `references/` and `agents/openai.yaml`.
+
+### Install All Supported Targets
 
 ```bash
 myriad skills install
 ```
 
-Use `--force` to overwrite existing skill files.
+This installs Claude Code, OpenClaw, and Codex skills. Use `--force` to overwrite existing skill files.
 
 ## Defaults and Risk (Read Once)
 
@@ -200,6 +249,7 @@ Use `--force` to overwrite existing skill files.
 - If both `--json` and `--plain` are passed, `--json` takes precedence.
 - Default chain is BNB Chain (`chainId=56`).
 - Default API base URL is `https://api-v2.myriadprotocol.com/`.
+- `myriad ob ...` defaults to BNB Chain mainnet order book settings.
 - Default slippage: trades `0.05`, stable swaps `0.005`.
 - On BNB Chain, buy flow can auto-swap `USDT`/`USD1` if required spend token balance is insufficient.
 - Light risk note: prediction market execution is probabilistic and market conditions can change quickly; use dry-runs before writing transactions.
@@ -210,15 +260,15 @@ Myriad CLI resolves config values in this order:
 
 1. CLI flags (for example `--rpc-url`, `--chain-id`, `--allowance`).
 2. Environment variables (`MYRIAD_*`) and `.env` in the current working directory.
-3. Global machine config file:
+3. Optional global machine-level config file:
   - `$XDG_CONFIG_HOME/myriad/config.json` when `XDG_CONFIG_HOME` is set.
   - Otherwise `~/.config/myriad/config.json`.
 4. Built-in network defaults.
 
 Supported global config keys:
-`apiBaseUrl`, `apiKey`, `allowance`, `chainId`, `rpcUrl`, `predictionMarketAddress`, `predictionMarketQuerierAddress`, `collateralTokenAddress`, `usdtTokenAddress`, `usd1TokenAddress`, `pancakeRouterV2Address`.
+`apiBaseUrl`, `apiKey`, `allowance`, `chainId`, `rpcUrl`, `predictionMarketAddress`, `predictionMarketQuerierAddress`, `collateralTokenAddress`, `usdtTokenAddress`, `usd1TokenAddress`, `pancakeRouterV2Address`, `obExchangeAddress`, `obConditionalTokens`, `obManager`, `obNegRiskAdapter`, `wrappedCollateral`.
 
-Example global config:
+Example optional global config:
 
 ```json
 {

@@ -1,5 +1,7 @@
 # Trade Execution Recipes
 
+Use this reference for AMM `myriad trade ...` flows. For `myriad ob ...`, use [../../myriad-orderbook/references/recipes.md](../../myriad-orderbook/references/recipes.md).
+
 ## Buy Recipes
 
 ```bash
@@ -34,6 +36,8 @@ myriad swap stable --from usdt --to usd1 --amount-out 50 --dry-run --json
 
 - `Provide exactly one of --market-id or --market-slug`:
   Keep only one market selector in buy/sell commands.
+- Need limit orders, market orders from order book depth, or order management:
+  Switch to `$myriad-orderbook`.
 - `Wallet signer is not configured`:
   Run `myriad wallet setup` or pass `--private-key`.
 - `Market network mismatch`:

@@ -30,6 +30,14 @@ myriad --private-key 0x... wallet balances --json
 4. Deposit either with `myriad wallet balances --json` if needed.
 5. Run target command with `--dry-run` first.
 
+## Order Book Readiness Check
+
+1. Run `myriad wallet balances --json`.
+2. Ensure BNB gas is available for BNB Smart Chain execution.
+3. Ensure USD1 balance is sufficient for buy/split workflows.
+4. Verify the signer matches the intended order book wallet.
+5. Verify the active order book runtime before launching mainnet writes.
+
 ## Troubleshooting
 
 - Keychain not available:

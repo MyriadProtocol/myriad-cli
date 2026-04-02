@@ -1,5 +1,7 @@
 # Market Discovery Recipes
 
+Use this reference for `myriad markets ...`. For `myriad ob markets ...`, use [../../myriad-orderbook/references/recipes.md](../../myriad-orderbook/references/recipes.md).
+
 ## Quick Recipes
 
 ```bash
@@ -26,6 +28,8 @@ myriad markets show will-btc-close-above-120k-on-friday --json
 
 - `Provide exactly one of --market-id or --market-slug`:
   This error comes from trade/claim flows, not `markets show`. For discovery, pass only one `<market>` argument.
+- Need order book depth, recent trades, or `--render`:
+  Switch to `myriad ob markets orderbook` / `myriad ob markets trades` via `$myriad-orderbook`.
 - Empty list results:
   Relax `--keyword`, switch `--state`, and try `--page 1 --limit 50`.
 - API 401 on restricted endpoints:

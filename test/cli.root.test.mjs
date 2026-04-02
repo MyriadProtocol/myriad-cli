@@ -52,6 +52,8 @@ test("running without a subcommand shows version and command list", async () => 
   assert.match(output, /Available commands:/);
   assert.match(output, /markets/);
   assert.match(output, /trade/);
+  assert.match(output, /ob/);
   assert.match(output, /wallet/);
+  assert.match(output, /skills/);
   assert.match(output, /Run `myriad <command> --help` for details\./);
 });

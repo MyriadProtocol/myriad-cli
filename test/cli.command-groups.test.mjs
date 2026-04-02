@@ -51,7 +51,11 @@ const commandCases = [
   { args: ["wallet"], commandPath: "myriad wallet", subcommands: ["setup", "deposit", "balances"] },
   { args: ["swap"], commandPath: "myriad swap", subcommands: ["stable"] },
   { args: ["trade"], commandPath: "myriad trade", subcommands: ["buy", "sell"] },
-  { args: ["claim"], commandPath: "myriad claim", subcommands: ["winnings", "voided", "all"] }
+  { args: ["ob"], commandPath: "myriad ob", subcommands: ["markets", "limit", "market", "orders", "positions"] },
+  { args: ["ob", "markets"], commandPath: "myriad ob markets", subcommands: ["list", "show", "orderbook", "trades"] },
+  { args: ["ob", "positions"], commandPath: "myriad ob positions", subcommands: ["list", "split", "merge", "redeem"] },
+  { args: ["claim"], commandPath: "myriad claim", subcommands: ["winnings", "voided", "all"] },
+  { args: ["skills"], commandPath: "myriad skills", subcommands: ["install"] }
 ];
 
 for (const commandCase of commandCases) {

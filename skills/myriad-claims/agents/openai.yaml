@@ -1,4 +1,4 @@
 interface:
   display_name: "Myriad Claims"
-  short_description: "Run winnings and voided claims"
-  default_prompt: "Use $myriad-claims to run winnings/voided/all claim workflows safely."
+  short_description: "Run AMM and general claim flows"
+  default_prompt: "Use $myriad-claims for `claim winnings`, `claim voided`, and `claim all`; use $myriad-orderbook for `myriad ob positions redeem`."

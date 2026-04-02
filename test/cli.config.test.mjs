@@ -101,7 +101,7 @@ test("CLI uses global config defaults when flags and env are absent", async () =
 
     const payload = JSON.parse(result.stdout);
     assert.equal(payload.chainId, 97);
-    assert.equal(payload.network, "Chain 97");
+    assert.equal(payload.network, "BSC Testnet");
     assert.equal(payload.assets.collateral.address.toLowerCase(), "0x3333333333333333333333333333333333333333");
   });
 });

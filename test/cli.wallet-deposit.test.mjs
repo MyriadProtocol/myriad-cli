@@ -14,11 +14,14 @@ function processEnvAsRecord() {
   return Object.fromEntries(Object.entries(process.env).filter((entry) => typeof entry[1] === "string"));
 }
 
-function runCli(args) {
+function runCli(args, envOverrides = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [distEntry, ...args], {
       cwd: repoRoot,
-      env: processEnvAsRecord()
+      env: {
+        ...processEnvAsRecord(),
+        ...envOverrides
+      }
     });
 
     let stdout = "";
@@ -44,7 +47,9 @@ function runCli(args) {
 }
 
 test("wallet deposit prints instructions by default", async () => {
-  const result = await runCli(["--private-key", PRIVATE_KEY_A, "wallet", "deposit"]);
+  const result = await runCli(["--private-key", PRIVATE_KEY_A, "wallet", "deposit"], {
+    MYRIAD_CHAIN_ID: "56"
+  });
   assert.equal(result.code, 0);
   assert.equal(result.stderr, "");
 
@@ -59,7 +64,9 @@ test("wallet deposit prints instructions by default", async () => {
 });
 
 test("wallet deposit keeps JSON output with --json", async () => {
-  const result = await runCli(["--private-key", PRIVATE_KEY_A, "wallet", "deposit", "--json"]);
+  const result = await runCli(["--private-key", PRIVATE_KEY_A, "wallet", "deposit", "--json"], {
+    MYRIAD_CHAIN_ID: "56"
+  });
   assert.equal(result.code, 0);
   assert.equal(result.stderr, "");
 
@@ -71,7 +78,9 @@ test("wallet deposit keeps JSON output with --json", async () => {
 });
 
 test("wallet deposit prints instructions with --plain", async () => {
-  const result = await runCli(["--private-key", PRIVATE_KEY_A, "wallet", "deposit", "--plain"]);
+  const result = await runCli(["--private-key", PRIVATE_KEY_A, "wallet", "deposit", "--plain"], {
+    MYRIAD_CHAIN_ID: "56"
+  });
   assert.equal(result.code, 0);
   assert.equal(result.stderr, "");
 
@@ -86,7 +95,9 @@ test("wallet deposit prints instructions with --plain", async () => {
 });
 
 test("wallet deposit uses JSON when both --json and --plain are passed", async () => {
-  const result = await runCli(["--private-key", PRIVATE_KEY_A, "wallet", "deposit", "--json", "--plain"]);
+  const result = await runCli(["--private-key", PRIVATE_KEY_A, "wallet", "deposit", "--json", "--plain"], {
+    MYRIAD_CHAIN_ID: "56"
+  });
   assert.equal(result.code, 0);
   assert.equal(result.stderr, "");
 

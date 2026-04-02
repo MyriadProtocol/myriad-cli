@@ -1,4 +1,4 @@
 interface:
   display_name: "Myriad Wallet Ops"
-  short_description: "Set up and troubleshoot Myriad wallets"
-  default_prompt: "Use $myriad-wallet-ops to set up, validate, and troubleshoot Myriad wallet/keychain behavior."
+  short_description: "Set up wallets and execution readiness"
+  default_prompt: "Use $myriad-wallet-ops to set up, validate, and troubleshoot Myriad wallet/keychain behavior, including order book readiness checks."

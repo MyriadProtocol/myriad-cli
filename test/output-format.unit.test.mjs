@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderMarketShowTable, renderMarketsListTable, renderPlainTables, renderPortfolioTable } from "../dist/output-format.js";
+import {
+  renderMarketShowTable,
+  renderMarketsListTable,
+  renderObOrderShowTable,
+  renderObOrdersListTable,
+  renderObOrderSubmission,
+  renderOrderbookLadder,
+  renderPlainTables,
+  renderPortfolioTable
+} from "../dist/output-format.js";
 
 test("renderPlainTables renders primitive payload as value table", () => {
   const output = renderPlainTables("hello");
@@ -58,6 +67,249 @@ test("renderPlainTables renders empty array sections with status table", () => {
   assert.match(output, /Section: results/);
   assert.match(output, /\|\s*status\s*\|/);
   assert.match(output, /\|\s*empty\s*\|/);
+});
+
+test("renderOrderbookLadder renders asks above midpoint and bids below midpoint", () => {
+  const output = renderOrderbookLadder(
+    {
+      marketId: 42,
+      marketTitle: "Will it rain?",
+      outcomeId: 0,
+      lastPrice: "0.5100",
+      asks: [
+        ["550000000000000000", "1000000000000000000"],
+        ["600000000000000000", "2500000000000000000"]
+      ],
+      bids: [
+        ["500000000000000000", "3000000000000000000"],
+        ["450000000000000000", "2000000000000000000"]
+      ]
+    },
+    { levels: 10, color: false }
+  );
+
+  const askFarIndex = output.indexOf("0.6000");
+  const askBestIndex = output.indexOf("0.5500");
+  const midpointIndex = output.indexOf("Last: 0.5100 | Mid: 0.5250 | Spread: 0.0500");
+  const bidBestIndex = output.indexOf("0.5000");
+  const bidFarIndex = output.indexOf("0.4500");
+
+  assert.notEqual(askFarIndex, -1);
+  assert.notEqual(askBestIndex, -1);
+  assert.notEqual(midpointIndex, -1);
+  assert.notEqual(bidBestIndex, -1);
+  assert.notEqual(bidFarIndex, -1);
+  assert.ok(askFarIndex < askBestIndex);
+  assert.ok(askBestIndex < midpointIndex);
+  assert.ok(midpointIndex < bidBestIndex);
+  assert.ok(bidBestIndex < bidFarIndex);
+  assert.match(output, /Price\s+Shares\s+Sum/);
+  assert.match(output, /█/);
+  assert.doesNotMatch(output, /\x1b\[/);
+  assert.doesNotMatch(output, /\|\s*Price\s*\|/);
+});
+
+test("renderOrderbookLadder respects the levels limit", () => {
+  const output = renderOrderbookLadder(
+    {
+      marketId: 42,
+      marketTitle: "Will it rain?",
+      outcomeId: 0,
+      asks: [
+        ["510000000000000000", "1000000000000000000"],
+        ["520000000000000000", "1000000000000000000"],
+        ["530000000000000000", "1000000000000000000"]
+      ],
+      bids: [
+        ["490000000000000000", "1000000000000000000"],
+        ["480000000000000000", "1000000000000000000"],
+        ["470000000000000000", "1000000000000000000"]
+      ]
+    },
+    { levels: 2, color: false }
+  );
+
+  assert.match(output, /0\.5100/);
+  assert.match(output, /0\.5200/);
+  assert.doesNotMatch(output, /0\.5300/);
+  assert.match(output, /0\.4900/);
+  assert.match(output, /0\.4800/);
+  assert.doesNotMatch(output, /0\.4700/);
+});
+
+test("renderOrderbookLadder scales bars using cumulative sum across both sides", () => {
+  const output = renderOrderbookLadder(
+    {
+      marketId: 42,
+      marketTitle: "Will it rain?",
+      outcomeId: 0,
+      asks: [
+        ["510000000000000000", "1000000000000000000"],
+        ["520000000000000000", "1000000000000000000"]
+      ],
+      bids: [["490000000000000000", "4000000000000000000"]]
+    },
+    { color: false }
+  );
+
+  const lines = output.split("\n");
+  const askFarLine = lines.find((line) => line.includes("0.5200"));
+  const askBestLine = lines.find((line) => line.includes("0.5100"));
+  const bidLine = lines.find((line) => line.includes("0.4900"));
+
+  assert.ok(askFarLine);
+  assert.ok(askBestLine);
+  assert.ok(bidLine);
+  assert.match(askBestLine, /1\.0000\s+1\.0000\s+█{5}/);
+  assert.match(askFarLine, /1\.0000\s+2\.0000\s+█{10}/);
+  assert.match(bidLine, /4\.0000\s+4\.0000\s+█{20}/);
+});
+
+test("renderOrderbookLadder shows midpoint N/A when one side is missing", () => {
+  const output = renderOrderbookLadder(
+    {
+      marketId: 42,
+      marketTitle: "Will it rain?",
+      outcomeId: 0,
+      asks: [["550000000000000000", "1000000000000000000"]],
+      bids: []
+    },
+    { color: false }
+  );
+
+  assert.match(output, /Last: N\/A \| Mid: N\/A \| Spread: N\/A/);
+  assert.match(output, /Bids/);
+  assert.match(output, /empty/);
+});
+
+test("renderOrderbookLadder shows a clear empty state for an empty book", () => {
+  const output = renderOrderbookLadder(
+    {
+      marketId: 42,
+      marketTitle: "Will it rain?",
+      outcomeId: 0,
+      asks: [],
+      bids: []
+    },
+    { color: false }
+  );
+
+  assert.match(output, /Orderbook is empty\./);
+  assert.match(output, /Last: N\/A \| Mid: N\/A \| Spread: N\/A/);
+});
+
+test("renderOrderbookLadder colorizes asks red and bids green when enabled", () => {
+  const output = renderOrderbookLadder(
+    {
+      marketId: 42,
+      marketTitle: "Will it rain?",
+      outcomeId: 0,
+      lastPrice: "0.5100",
+      asks: [["550000000000000000", "1000000000000000000"]],
+      bids: [["500000000000000000", "1000000000000000000"]]
+    },
+    { color: true }
+  );
+
+  assert.match(output, /Asks[\s\S]*\x1b\[31m█+\x1b\[0m/);
+  assert.match(output, /Bids[\s\S]*\x1b\[32m█+\x1b\[0m/);
+});
+
+test("renderObOrderSubmission formats completion, dollars, and shares without raw integers", () => {
+  const output = renderObOrderSubmission({
+    wallet: "0xabc",
+    marketId: 42,
+    marketTitle: "Will it rain?",
+    outcomeId: 0,
+    side: "buy",
+    timeInForce: "FAK",
+    orderHash: "0xorder",
+    order: {
+      amount: "2500000000000000000",
+      price: "550000000000000000",
+      minFillAmount: "0"
+    },
+    marketQuote: {
+      inputMode: "value",
+      requestedValueRaw: "1100000000000000000",
+      estimatedSharesRaw: "2000000000000000000",
+      estimatedValueRaw: "1100000000000000000",
+      deepestPriceRaw: "600000000000000000"
+    },
+    observedOrder: {
+      filledAmount: "2000000000000000000"
+    },
+    completion: "filled",
+    observedStatus: "filled",
+    waitMs: 5000,
+    timedOut: false,
+    followUpCommand: "myriad ob orders show 0xorder --json",
+    approval: {
+      type: "erc20_allowance",
+      approved: true,
+      requiredAmount: "1.44"
+    }
+  });
+
+  assert.match(output, /Section: summary/);
+  assert.match(output, /\|\s*completion\s*\|\s*Filled\s*\|/);
+  assert.match(output, /\|\s*shares\s*\|\s*2\.5\s*\|/);
+  assert.match(output, /\|\s*requestedValue\s*\|\s*\$1\.10\s*\|/);
+  assert.match(output, /\|\s*estimatedShares\s*\|\s*2\s*\|/);
+  assert.match(output, /\|\s*derivedPrice\s*\|\s*0\.6000\s*\|/);
+  assert.match(output, /\|\s*filledShares\s*\|\s*2\s*\|/);
+  assert.doesNotMatch(output, /2500000000000000000/);
+  assert.doesNotMatch(output, /1100000000000000000/);
+});
+
+test("renderObOrdersListTable formats list rows in human units", () => {
+  const output = renderObOrdersListTable({
+    data: [
+      {
+        orderHash: "0xaaa",
+        status: "cancelled",
+        filledAmount: "500000000000000000",
+        timeInForce: "FAK",
+        order: {
+          side: 0,
+          amount: "1250000000000000000",
+          price: "550000000000000000",
+          marketId: 42,
+          outcomeId: 0
+        }
+      }
+    ]
+  });
+
+  assert.match(output, /\|\s*Order Hash\s*\|\s*Side\s*\|\s*Status\s*\|\s*Completion\s*\|/);
+  assert.match(output, /\|\s*0xaaa\s*\|\s*buy\s*\|\s*cancelled\s*\|\s*Partially filled\s*\|/);
+  assert.match(output, /\|\s*1\.25\s*\|\s*0\.5\s*\|\s*0\.5500\s*\|\s*\$0\.69\s*\|/);
+  assert.doesNotMatch(output, /1250000000000000000/);
+});
+
+test("renderObOrderShowTable formats order details without raw on-chain amounts", () => {
+  const output = renderObOrderShowTable({
+    orderHash: "0xbbb",
+    status: "open",
+    filledAmount: "500000000000000000",
+    timeInForce: "GTC",
+    createdAt: "2025-07-01T12:00:00.000Z",
+    updatedAt: "2025-07-01T12:05:00.000Z",
+    order: {
+      side: 1,
+      amount: "3000000000000000000",
+      price: "450000000000000000",
+      marketId: 77,
+      outcomeId: 1
+    }
+  });
+
+  assert.match(output, /\|\s*completion\s*\|\s*Partially filled\s*\|/);
+  assert.match(output, /\|\s*shares\s*\|\s*3\s*\|/);
+  assert.match(output, /\|\s*filledShares\s*\|\s*0\.5\s*\|/);
+  assert.match(output, /\|\s*price\s*\|\s*0\.4500\s*\|/);
+  assert.match(output, /\|\s*orderValue\s*\|\s*\$1\.35\s*\|/);
+  assert.doesNotMatch(output, /3000000000000000000/);
 });
 
 test("renderMarketsListTable renders only requested market columns", () => {

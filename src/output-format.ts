@@ -1,3 +1,35 @@
+import process from "node:process";
+import { BigNumber, utils } from "ethers";
+
+type OrderbookRenderPayload = {
+  marketId?: string | number;
+  marketTitle?: string;
+  outcomeId?: string | number;
+  lastPrice?: string | number;
+  asks?: Array<[string, string]>;
+  bids?: Array<[string, string]>;
+};
+
+type OrderbookRenderOptions = {
+  levels?: number;
+  color?: boolean;
+};
+
+type NormalizedOrderbookLevel = {
+  priceRaw: BigNumber;
+  sizeRaw: BigNumber;
+  price: number;
+  size: number;
+  cumulative: number;
+};
+
+const ORDERBOOK_DECIMALS = 18;
+const ORDERBOOK_BAR_WIDTH = 20;
+const ORDERBOOK_BAR_GLYPH = "█";
+const ANSI_RESET = "\x1b[0m";
+const ANSI_GREEN = "\x1b[32m";
+const ANSI_RED = "\x1b[31m";
+
 function isScalar(value: unknown): boolean {
   return (
     value === null ||
@@ -139,6 +171,165 @@ function renderArrayTable(items: unknown[]): string {
   return renderAsciiTable(["index", "value"], rows);
 }
 
+function parseOrderbookRawUnits(value: unknown): BigNumber | undefined {
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
+    return undefined;
+  }
+
+  try {
+    const parsed = BigNumber.from(String(value));
+    return parsed.gte(0) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatOrderbookUnits(raw: BigNumber): number {
+  return Number(utils.formatUnits(raw, ORDERBOOK_DECIMALS));
+}
+
+function formatOrderbookDecimal(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(4) : "N/A";
+}
+
+function shouldUseAnsiColor(explicitColor: boolean | undefined): boolean {
+  if (explicitColor !== undefined) {
+    return explicitColor;
+  }
+
+  const forceColor = process.env.FORCE_COLOR?.trim();
+  if (forceColor && forceColor !== "0") {
+    return true;
+  }
+
+  if (process.env.NO_COLOR !== undefined) {
+    return false;
+  }
+
+  return Boolean(process.stdout?.isTTY);
+}
+
+function colorize(text: string, colorCode: string, enabled: boolean): string {
+  if (!enabled || text.length === 0) {
+    return text;
+  }
+  return `${colorCode}${text}${ANSI_RESET}`;
+}
+
+function renderDepthBar(depthValue: number, maxDepthValue: number, colorCode: string, colorEnabled: boolean): string {
+  if (!Number.isFinite(depthValue) || depthValue <= 0 || !Number.isFinite(maxDepthValue) || maxDepthValue <= 0) {
+    return "";
+  }
+
+  const filledWidth = Math.max(1, Math.round((depthValue / maxDepthValue) * ORDERBOOK_BAR_WIDTH));
+  const bar = ORDERBOOK_BAR_GLYPH.repeat(Math.min(ORDERBOOK_BAR_WIDTH, filledWidth));
+  return colorize(bar, colorCode, colorEnabled);
+}
+
+function normalizeOrderbookLevels(
+  levels: unknown,
+  direction: "asc" | "desc",
+  limit: number
+): NormalizedOrderbookLevel[] {
+  if (!Array.isArray(levels)) {
+    return [];
+  }
+
+  const parsedLevels: Array<{ priceRaw: BigNumber; sizeRaw: BigNumber }> = [];
+
+  for (const level of levels) {
+    if (!Array.isArray(level) || level.length < 2) {
+      continue;
+    }
+
+    const priceRaw = parseOrderbookRawUnits(level[0]);
+    const sizeRaw = parseOrderbookRawUnits(level[1]);
+    if (!priceRaw || !sizeRaw || sizeRaw.lte(0)) {
+      continue;
+    }
+
+    parsedLevels.push({ priceRaw, sizeRaw });
+  }
+
+  parsedLevels.sort((left, right) => {
+    if (left.priceRaw.eq(right.priceRaw)) {
+      return 0;
+    }
+    if (direction === "asc") {
+      return left.priceRaw.lt(right.priceRaw) ? -1 : 1;
+    }
+    return left.priceRaw.gt(right.priceRaw) ? -1 : 1;
+  });
+
+  const visibleLevels = parsedLevels.slice(0, limit);
+  let cumulativeRaw = BigNumber.from(0);
+
+  return visibleLevels.map((level) => {
+    cumulativeRaw = cumulativeRaw.add(level.sizeRaw);
+    return {
+      priceRaw: level.priceRaw,
+      sizeRaw: level.sizeRaw,
+      price: formatOrderbookUnits(level.priceRaw),
+      size: formatOrderbookUnits(level.sizeRaw),
+      cumulative: formatOrderbookUnits(cumulativeRaw)
+    };
+  });
+}
+
+function buildOrderbookColumnHeader(widths: { price: number; shares: number; sum: number }): string {
+  return [
+    padCell("Price", widths.price),
+    padCell("Shares", widths.shares),
+    padCell("Sum", widths.sum)
+  ].join("  ");
+}
+
+function buildOrderbookColumnWidths(
+  asks: NormalizedOrderbookLevel[],
+  bids: NormalizedOrderbookLevel[]
+): { price: number; shares: number; sum: number } {
+  const levels = [...asks, ...bids];
+  return {
+    price: Math.max("Price".length, ...levels.map((level) => formatOrderbookDecimal(level.price).length)),
+    shares: Math.max("Shares".length, ...levels.map((level) => formatOrderbookDecimal(level.size).length)),
+    sum: Math.max("Sum".length, ...levels.map((level) => formatOrderbookDecimal(level.cumulative).length))
+  };
+}
+
+function renderOrderbookRow(
+  level: NormalizedOrderbookLevel,
+  widths: { price: number; shares: number; sum: number },
+  maxDisplayedCumulative: number,
+  colorCode: string,
+  colorEnabled: boolean
+): string {
+  const columns = [
+    padCell(formatOrderbookDecimal(level.price), widths.price),
+    padCell(formatOrderbookDecimal(level.size), widths.shares),
+    padCell(formatOrderbookDecimal(level.cumulative), widths.sum)
+  ].join("  ");
+
+  const bar = renderDepthBar(level.cumulative, maxDisplayedCumulative, colorCode, colorEnabled);
+  return bar.length > 0 ? `${columns}  ${bar}` : columns;
+}
+
+function renderOrderbookSection(
+  title: string,
+  levels: NormalizedOrderbookLevel[],
+  widths: { price: number; shares: number; sum: number },
+  maxDisplayedCumulative: number,
+  colorCode: string,
+  colorEnabled: boolean
+): string {
+  const header = buildOrderbookColumnHeader(widths);
+  if (levels.length === 0) {
+    return `${title}\n${header}\nempty`;
+  }
+
+  const rows = levels.map((level) => renderOrderbookRow(level, widths, maxDisplayedCumulative, colorCode, colorEnabled));
+  return `${title}\n${header}\n${rows.join("\n")}`;
+}
+
 function renderTopLevelObject(payload: Record<string, unknown>): string {
   const sections: string[] = [];
   const summaryEntries: Array<[string, unknown]> = [];
@@ -185,11 +376,68 @@ export function renderPlainTables(payload: unknown): string {
   return renderAsciiTable(["value"], [[normalizeCellValue(payload)]]);
 }
 
+export function renderOrderbookLadder(payload: unknown, options: OrderbookRenderOptions = {}): string {
+  const orderbook = isObject(payload) ? (payload as OrderbookRenderPayload) : {};
+  const levelLimit = options.levels ?? 10;
+  if (!Number.isInteger(levelLimit) || levelLimit <= 0) {
+    throw new Error("levels must be a positive integer.");
+  }
+
+  const colorEnabled = shouldUseAnsiColor(options.color);
+  const asks = normalizeOrderbookLevels(orderbook.asks, "asc", levelLimit);
+  const bids = normalizeOrderbookLevels(orderbook.bids, "desc", levelLimit);
+  const visibleAsks = [...asks].reverse();
+  const visibleBids = bids;
+  const displayedCumulativeDepth = [...asks, ...bids].map((level) => level.cumulative);
+  const maxDisplayedCumulative = displayedCumulativeDepth.length === 0 ? 0 : Math.max(...displayedCumulativeDepth);
+  const widths = buildOrderbookColumnWidths(asks, bids);
+  const lastPrice = asNumber(orderbook.lastPrice);
+  const bestAsk = asks[0]?.price;
+  const bestBid = bids[0]?.price;
+  const midpoint = bestAsk !== undefined && bestBid !== undefined ? (bestAsk + bestBid) / 2 : undefined;
+  const spread = bestAsk !== undefined && bestBid !== undefined ? bestAsk - bestBid : undefined;
+  const headerLines = [
+    `Orderbook: ${readStringOrFallback(orderbook.marketTitle, "Unknown market")}`,
+    `Market ID: ${orderbook.marketId ?? "N/A"} | Outcome ID: ${orderbook.outcomeId ?? "N/A"}`
+  ];
+  const statsLine = [
+    `Last: ${lastPrice !== undefined ? formatOrderbookDecimal(lastPrice) : "N/A"}`,
+    `Mid: ${midpoint !== undefined ? formatOrderbookDecimal(midpoint) : "N/A"}`,
+    `Spread: ${spread !== undefined ? formatOrderbookDecimal(spread) : "N/A"}`
+  ].join(" | ");
+
+  if (asks.length === 0 && bids.length === 0) {
+    return [...headerLines, statsLine, "", "Orderbook is empty."].join("\n");
+  }
+
+  return [
+    ...headerLines,
+    "",
+    renderOrderbookSection("Asks", visibleAsks, widths, maxDisplayedCumulative, ANSI_RED, colorEnabled),
+    "",
+    statsLine,
+    "",
+    renderOrderbookSection("Bids", visibleBids, widths, maxDisplayedCumulative, ANSI_GREEN, colorEnabled)
+  ].join("\n");
+}
+
 const usdFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
   minimumFractionDigits: 2,
   maximumFractionDigits: 2
+});
+
+const usdTinyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4
+});
+
+const compactDecimalFormatter = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 4
 });
 
 function formatCurrency(value: unknown): string {
@@ -199,6 +447,306 @@ function formatCurrency(value: unknown): string {
   }
 
   return usdFormatter.format(numeric);
+}
+
+function formatHumanCurrency(value: unknown): string {
+  const numeric = asNumber(value);
+  if (numeric === undefined) {
+    return "N/A";
+  }
+
+  if (numeric !== 0 && Math.abs(numeric) < 0.01) {
+    return usdTinyFormatter.format(numeric);
+  }
+
+  return usdFormatter.format(numeric);
+}
+
+function formatHumanDecimal(value: unknown): string {
+  const numeric = asNumber(value);
+  if (numeric === undefined) {
+    return "N/A";
+  }
+
+  return compactDecimalFormatter.format(numeric);
+}
+
+function formatUnitsDisplay(raw: unknown, decimals: number): string {
+  const parsed = parseOrderbookRawUnits(raw);
+  if (!parsed) {
+    return "N/A";
+  }
+
+  return formatHumanDecimal(utils.formatUnits(parsed, decimals));
+}
+
+function formatProbabilityRaw(raw: unknown): string {
+  const parsed = parseOrderbookRawUnits(raw);
+  if (!parsed) {
+    return "N/A";
+  }
+
+  return formatOrderbookDecimal(formatOrderbookUnits(parsed));
+}
+
+function formatUsdFromRaw(raw: unknown, decimals = ORDERBOOK_DECIMALS): string {
+  const parsed = parseOrderbookRawUnits(raw);
+  if (!parsed) {
+    return "N/A";
+  }
+
+  return formatHumanCurrency(utils.formatUnits(parsed, decimals));
+}
+
+function formatClobShares(raw: unknown): string {
+  return formatUnitsDisplay(raw, ORDERBOOK_DECIMALS);
+}
+
+function formatOrderValue(rawAmount: unknown, rawPrice: unknown): string {
+  const amount = parseOrderbookRawUnits(rawAmount);
+  const price = parseOrderbookRawUnits(rawPrice);
+  if (!amount || !price) {
+    return "N/A";
+  }
+
+  return formatUsdFromRaw(amount.mul(price).div(BigNumber.from("1000000000000000000")).toString());
+}
+
+function formatCompletionLabel(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    return "N/A";
+  }
+
+  const normalized = value.split("_").join(" ").toLowerCase();
+  return normalized.length > 0 ? `${normalized[0].toUpperCase()}${normalized.slice(1)}` : normalized;
+}
+
+function formatObservedStatus(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    return "N/A";
+  }
+  return value;
+}
+
+function formatOrderSide(value: unknown): string {
+  if (value === 0 || value === "0") {
+    return "buy";
+  }
+  if (value === 1 || value === "1") {
+    return "sell";
+  }
+  return "N/A";
+}
+
+function readOrderRecordOrder(payload: Record<string, unknown>): Record<string, unknown> | undefined {
+  return isObject(payload.order) ? payload.order : undefined;
+}
+
+function deriveCompletion(payload: Record<string, unknown>): string {
+  if (typeof payload.completion === "string" && payload.completion.length > 0) {
+    return payload.completion;
+  }
+
+  const order = readOrderRecordOrder(payload);
+  const filledAmount = parseOrderbookRawUnits(payload.filledAmount);
+  const orderAmount = parseOrderbookRawUnits(order?.amount);
+  const status = typeof payload.status === "string" ? payload.status.toLowerCase() : "";
+
+  if (status === "filled" || (filledAmount && orderAmount && filledAmount.gte(orderAmount))) {
+    return "filled";
+  }
+  if (filledAmount && filledAmount.gt(0)) {
+    return "partially_filled";
+  }
+  if (status === "cancelled") {
+    return "cancelled";
+  }
+  if (status === "expired") {
+    return "expired";
+  }
+  if (status === "open") {
+    return "open";
+  }
+  return "pending_sync";
+}
+
+function formatApprovalLabel(value: unknown): string {
+  if (!isObject(value)) {
+    return "N/A";
+  }
+
+  if (value.skipped === true) {
+    return "Skipped";
+  }
+  if (value.approved === true && value.type === "erc1155_approval_for_all") {
+    return "Approved for all";
+  }
+  if (value.approved === true && value.type === "erc20_allowance") {
+    return "Allowance ready";
+  }
+  if (value.type === "erc1155_approval_for_all") {
+    return "Approval for all required";
+  }
+  if (value.type === "erc20_allowance") {
+    return "Allowance required";
+  }
+  return "N/A";
+}
+
+export function renderObOrderSubmission(payload: unknown): string {
+  if (!isObject(payload)) {
+    return renderKeyValueTable([["status", "empty"]]);
+  }
+
+  const order = readOrderRecordOrder(payload) ?? (isObject(payload.order) ? payload.order : undefined) ?? {};
+  const observedOrder = isObject(payload.observedOrder) ? payload.observedOrder : undefined;
+  const marketQuote = isObject(payload.marketQuote) ? payload.marketQuote : undefined;
+  const isDryRun = observedOrder === undefined && payload.response === undefined && payload.completion === undefined;
+
+  const summaryEntries: Array<[string, unknown]> = [
+    ["wallet", payload.wallet],
+    ["market", `${readStringOrFallback(payload.marketTitle)} (${formatIdentifier(payload.marketId)})`],
+    ["outcomeId", formatIdentifier(payload.outcomeId)],
+    ["side", readStringOrFallback(payload.side)],
+    ["timeInForce", readStringOrFallback(payload.timeInForce)]
+  ];
+
+  if (payload.orderHash !== undefined) {
+    summaryEntries.push(["orderHash", payload.orderHash]);
+  }
+
+  if (!isDryRun) {
+    summaryEntries.push(["completion", formatCompletionLabel(payload.completion)]);
+    summaryEntries.push(["observedStatus", formatObservedStatus(payload.observedStatus)]);
+    summaryEntries.push(["waitMs", payload.waitMs ?? 0]);
+    summaryEntries.push(["timedOut", payload.timedOut === true ? "yes" : "no"]);
+  }
+
+  const economicsEntries: Array<[string, unknown]> = [
+    ["price", formatProbabilityRaw(order.price)],
+    ["shares", formatClobShares(order.amount)],
+    ["orderValue", formatOrderValue(order.amount, order.price)]
+  ];
+
+  if (parseOrderbookRawUnits(order.minFillAmount)?.gt(0)) {
+    economicsEntries.push(["minFillShares", formatClobShares(order.minFillAmount)]);
+  }
+
+  if (marketQuote) {
+    economicsEntries.push(["inputMode", readStringOrFallback(marketQuote.inputMode)]);
+    if (marketQuote.requestedSharesRaw !== undefined) {
+      economicsEntries.push(["requestedShares", formatClobShares(marketQuote.requestedSharesRaw)]);
+    }
+    if (marketQuote.requestedValueRaw !== undefined) {
+      economicsEntries.push(["requestedValue", formatUsdFromRaw(marketQuote.requestedValueRaw)]);
+    }
+    economicsEntries.push(["estimatedShares", formatClobShares(marketQuote.estimatedSharesRaw)]);
+    economicsEntries.push(["estimatedValue", formatUsdFromRaw(marketQuote.estimatedValueRaw)]);
+    economicsEntries.push(["derivedPrice", formatProbabilityRaw(marketQuote.deepestPriceRaw)]);
+  }
+
+  if (observedOrder) {
+    economicsEntries.push(["filledShares", formatClobShares(observedOrder.filledAmount)]);
+    economicsEntries.push(["filledValue", formatOrderValue(observedOrder.filledAmount, order.price)]);
+  }
+
+  const flowEntries: Array<[string, unknown]> = [["approval", formatApprovalLabel(payload.approval)]];
+  if (isObject(payload.approval) && payload.approval.requiredAmount !== undefined) {
+    flowEntries.push(["requiredApproval", formatHumanDecimal(payload.approval.requiredAmount)]);
+  }
+  if (!isDryRun) {
+    flowEntries.push(["followUpCommand", payload.followUpCommand]);
+  }
+  if (marketQuote?.note) {
+    flowEntries.push(["note", marketQuote.note]);
+  }
+
+  return [
+    "Section: summary",
+    renderKeyValueTable(summaryEntries),
+    "",
+    "Section: economics",
+    renderKeyValueTable(economicsEntries),
+    "",
+    "Section: flow",
+    renderKeyValueTable(flowEntries)
+  ].join("\n");
+}
+
+export function renderObOrdersListTable(payload: unknown): string {
+  const headers = ["Order Hash", "Side", "Status", "Completion", "Shares", "Filled", "Price", "Value", "TIF", "Market ID", "Outcome ID"];
+
+  if (!isObject(payload) || !Array.isArray(payload.data)) {
+    return renderAsciiTable(headers, [["N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]]);
+  }
+
+  const rows = payload.data
+    .filter((entry) => isObject(entry))
+    .map((entry) => {
+      const order = readOrderRecordOrder(entry) ?? {};
+      return [
+        readStringOrFallback(entry.orderHash),
+        formatOrderSide(order.side),
+        readStringOrFallback(entry.status),
+        formatCompletionLabel(deriveCompletion(entry)),
+        formatClobShares(order.amount),
+        formatClobShares(entry.filledAmount),
+        formatProbabilityRaw(order.price),
+        formatOrderValue(order.amount, order.price),
+        readStringOrFallback(entry.timeInForce),
+        formatIdentifier(order.marketId),
+        formatIdentifier(order.outcomeId)
+      ];
+    });
+
+  if (rows.length === 0) {
+    rows.push(["N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]);
+  }
+
+  return renderAsciiTable(headers, rows);
+}
+
+export function renderObOrderShowTable(payload: unknown): string {
+  if (!isObject(payload)) {
+    return renderKeyValueTable([["status", "empty"]]);
+  }
+
+  const order = readOrderRecordOrder(payload) ?? {};
+  const summaryEntries: Array<[string, unknown]> = [
+    ["orderHash", payload.orderHash],
+    ["side", formatOrderSide(order.side)],
+    ["status", readStringOrFallback(payload.status)],
+    ["completion", formatCompletionLabel(deriveCompletion(payload))],
+    ["timeInForce", readStringOrFallback(payload.timeInForce)],
+    ["marketId", formatIdentifier(order.marketId)],
+    ["outcomeId", formatIdentifier(order.outcomeId)]
+  ];
+
+  const economicsEntries: Array<[string, unknown]> = [
+    ["shares", formatClobShares(order.amount)],
+    ["filledShares", formatClobShares(payload.filledAmount)],
+    ["price", formatProbabilityRaw(order.price)],
+    ["orderValue", formatOrderValue(order.amount, order.price)],
+    ["filledValue", formatOrderValue(payload.filledAmount, order.price)]
+  ];
+
+  const lifecycleEntries: Array<[string, unknown]> = [
+    ["createdAt", readStringOrFallback(payload.createdAt)],
+    ["updatedAt", readStringOrFallback(payload.updatedAt)],
+    ["filledAt", readStringOrFallback(payload.filledAt)],
+    ["cancelledAt", readStringOrFallback(payload.cancelledAt)]
+  ];
+
+  return [
+    "Section: summary",
+    renderKeyValueTable(summaryEntries),
+    "",
+    "Section: economics",
+    renderKeyValueTable(economicsEntries),
+    "",
+    "Section: lifecycle",
+    renderKeyValueTable(lifecycleEntries)
+  ].join("\n");
 }
 
 function pickMostLikelyOutcome(value: unknown): string {

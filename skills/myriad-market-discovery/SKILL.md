@@ -1,6 +1,6 @@
 ---
 name: myriad-market-discovery
-description: Discover, filter, and inspect Myriad markets through CLI-first workflows. Use when the task is to list open/closed/resolved markets, drill into a market by id or slug, compare candidate markets, paginate/search/sort results, or produce JSON summaries before any trade decision.
+description: Discover, filter, and inspect Myriad markets through `myriad markets ...` CLI workflows. Use when the task is to list open/closed/resolved AMM or general markets, drill into a market by id or slug, compare candidates, paginate/search/sort results, or produce JSON summaries before non-orderbook trade decisions.
 user-invocable: true
 metadata: {"openclaw":{"requires":{"bins":["myriad"]},"primaryEnv":"MYRIAD_API_KEY","emoji":"\uD83D\uDD0D","os":["darwin","linux","win32"]}}
 ---
@@ -9,12 +9,13 @@ metadata: {"openclaw":{"requires":{"bins":["myriad"]},"primaryEnv":"MYRIAD_API_K
 
 ## Overview
 
-Use this skill to find and evaluate tradable Myriad markets before any execution step. Keep outputs structured and decision oriented, defaulting to JSON.
+Use this skill to find and evaluate markets through `myriad markets ...` before any AMM/general execution step. Keep outputs structured and decision oriented, defaulting to JSON.
 
 ## Workflow
 
 1. Confirm runtime context before discovery.
-- Assume BNB Chain (`chainId=56`) unless the user requests an override.
+- Do not assume orderbook/runtime defaults are correct for every deployment.
+- Use explicit `--network-id` when resolving numeric ids across networks.
 - Use `--json` unless the user explicitly requests human-readable output.
 
 2. Start with broad market scans.
@@ -29,6 +30,9 @@ Use this skill to find and evaluate tradable Myriad markets before any execution
 4. Summarize for decision support.
 - Return a compact ranking of candidates with rationale (liquidity, volume, expiry, and user intent fit).
 - Call out missing details that block trading decisions.
+
+5. Hand off order book discovery when relevant.
+- If the user asks for `myriad ob ...`, order book depth, limit/market orders, or orderbook-specific markets, route to `$myriad-orderbook`.
 
 ## Command Patterns
 
@@ -59,6 +63,7 @@ myriad markets show will-btc-close-above-120k-on-friday --json
 
 ## Boundaries
 
+- Do not use this skill for `myriad ob markets ...`; hand off to `$myriad-orderbook`.
 - Do not place trades in this skill; hand off to `$myriad-trade-execution`.
 - Do not set up MCP in this skill; hand off to `$myriad-mcp-orchestration`.
 - Do not troubleshoot wallet/keychain storage in this skill; hand off to `$myriad-wallet-ops`.

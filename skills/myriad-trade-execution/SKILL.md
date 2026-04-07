@@ -75,7 +75,7 @@ myriad trade sell --market-id 164 --outcome-id 0 --shares 20 --json
 - Missing signer error:
   Run `myriad wallet setup` or pass `--private-key` for one-off execution.
 - Approval-related failure:
-  Increase `--allowance` / `--swap-allowance` or use `UNLIMITED` with explicit user intent.
+  Increase `--allowance` / `--swap-allowance` cautiously, or use `UNLIMITED` only with explicit user intent.
 - Slippage failure:
   Re-quote, then adjust `--slippage` conservatively.
 

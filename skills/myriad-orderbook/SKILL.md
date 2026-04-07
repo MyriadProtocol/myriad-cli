@@ -11,6 +11,8 @@ metadata: {"openclaw":{"requires":{"bins":["myriad"]},"primaryEnv":"MYRIAD_API_K
 
 Use this skill for the full `myriad ob ...` workflow: discover markets, inspect depth, place orders, manage open orders, and manage positions.
 
+Important: `myriad ob market ...` uses synthesized market-style orders derived from the live order book snapshot, not a native exchange-side market order guarantee.
+
 Treat the order book as a production BNB Smart Chain workflow by default. Use explicit runtime overrides only when targeting a non-production deployment.
 
 ## Runtime Sanity

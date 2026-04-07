@@ -3,7 +3,6 @@
 import process from "node:process";
 import { Command, CommanderError } from "commander";
 import dotenv from "dotenv";
-import { createRequire } from "node:module";
 import { loadRuntimeConfig, parseInteger, RuntimeConfig } from "./config.js";
 import {
   OrderWaitProgressEvent,
@@ -43,11 +42,10 @@ import {
 } from "./output-format.js";
 import { setupWalletInteractive } from "./wallet-store.js";
 import { runSkillsInstall, formatInstallSummary } from "./skills-install.js";
+import { CLI_VERSION } from "./version.js";
 
 dotenv.config();
-const require = createRequire(import.meta.url);
-const packageJson = require("../package.json") as { version?: string };
-const cliVersion = packageJson.version ?? "0.0.0";
+const cliVersion = CLI_VERSION;
 
 type GlobalOptions = {
   plain?: boolean;
@@ -312,7 +310,7 @@ const walletCommand = program.command("wallet").description("Wallet utilities");
 walletCommand
   .command("setup")
   .alias("import")
-  .description("Interactively create a wallet or import a private key/seed phrase into keychain-backed encrypted wallet storage")
+  .description("Interactively create a wallet or import a private key/seed phrase into keychain-backed encrypted wallet storage (macOS/Linux for keychain persistence; use --private-key or MYRIAD_PRIVATE_KEY on Windows)")
   .action(async (_options, command) => {
     const result = await setupWalletInteractive();
     output(command, {

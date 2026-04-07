@@ -167,6 +167,8 @@ myriad ob markets list --json
 myriad ob markets orderbook --market-id 42 --outcome-id 0 --json
 myriad ob limit buy --market-id 42 --outcome-id 0 --price 0.55 --shares 5 --json
 myriad ob market sell --market-id 42 --outcome-id 1 --shares 2 --dry-run --json
+
+Note: `myriad ob market ...` submits synthesized market-style orders derived from the current order book snapshot. Realized fills can differ if the book moves before execution.
 myriad ob orders list --json
 myriad ob positions list --json
 myriad ob positions split --market-id 42 --amount 10 --dry-run --json
@@ -276,13 +278,14 @@ Example optional global config:
   "rpcUrl": "https://bsc-dataseed.binance.org/",
   "apiBaseUrl": "https://api-v2.myriadprotocol.com/",
   "apiKey": "optional-api-key",
-  "allowance": "UNLIMITED"
+  "allowance": "250"
 }
 ```
 
 Security note:
 - Do not place private keys in global config.
-- Use `myriad wallet setup` (encrypted wallet file + OS keychain), `MYRIAD_PRIVATE_KEY`, or `--private-key`.
+- Use `myriad wallet setup` (encrypted wallet file + OS keychain on macOS/Linux), `MYRIAD_PRIVATE_KEY`, or `--private-key`.
+- On Windows, prefer `MYRIAD_PRIVATE_KEY` or `--private-key` until keychain-backed persistence is added.
 
 ## Further Reading
 

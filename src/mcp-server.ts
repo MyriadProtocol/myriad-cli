@@ -26,6 +26,7 @@ import {
   TradeSellInput,
   WalletBalancesInput
 } from "./operations.js";
+import { CLI_VERSION } from "./version.js";
 
 const INTEGER_LIKE_SCHEMA = z.union([z.number().int(), z.string().trim().min(1)]);
 const NUMBER_LIKE_SCHEMA = z.union([z.number(), z.string().trim().min(1)]);
@@ -782,7 +783,7 @@ export function createMyriadMcpServer(operations: MyriadOperationsLike, serverIn
 export async function startMyriadMcpServer(context: OperationContext): Promise<void> {
   const server = createMyriadMcpServer(new MyriadOperations(context), {
     name: "myriad",
-    version: "0.1.0"
+    version: CLI_VERSION
   });
 
   const transport = new StdioServerTransport();

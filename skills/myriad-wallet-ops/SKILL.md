@@ -13,6 +13,8 @@ Use this skill for wallet onboarding and signer troubleshooting in Myriad CLI ru
 
 ## Wallet Setup Flow
 
+Keychain-backed wallet persistence is currently supported on macOS and Linux. On Windows, use `MYRIAD_PRIVATE_KEY` or `--private-key` for now.
+
 1. Run interactive setup in a TTY.
 
 ```bash
@@ -28,7 +30,7 @@ myriad wallet setup
 Resolve signer in this order.
 
 1. Command-level `--private-key`.
-2. Environment `MYRIAD_PRIVATE_KEY` (or `PRIVATE_KEY`).
+2. Environment `MYRIAD_PRIVATE_KEY` (legacy `PRIVATE_KEY` fallback is still accepted for compatibility but should be avoided in new setups).
 3. Configured keychain-backed wallet from `wallet setup`.
 
 If none is available, fail closed and return signer configuration error.

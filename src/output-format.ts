@@ -1,5 +1,5 @@
 import process from "node:process";
-import { BigNumber, utils } from "ethers";
+import { formatUnits } from "ethers";
 
 type OrderbookRenderPayload = {
   marketId?: string | number;
@@ -16,8 +16,8 @@ type OrderbookRenderOptions = {
 };
 
 type NormalizedOrderbookLevel = {
-  priceRaw: BigNumber;
-  sizeRaw: BigNumber;
+  priceRaw: bigint;
+  sizeRaw: bigint;
   price: number;
   size: number;
   cumulative: number;
@@ -171,21 +171,21 @@ function renderArrayTable(items: unknown[]): string {
   return renderAsciiTable(["index", "value"], rows);
 }
 
-function parseOrderbookRawUnits(value: unknown): BigNumber | undefined {
+function parseOrderbookRawUnits(value: unknown): bigint | undefined {
   if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
     return undefined;
   }
 
   try {
-    const parsed = BigNumber.from(String(value));
-    return parsed.gte(0) ? parsed : undefined;
+    const parsed = BigInt(String(value));
+    return parsed >= 0n ? parsed : undefined;
   } catch {
     return undefined;
   }
 }
 
-function formatOrderbookUnits(raw: BigNumber): number {
-  return Number(utils.formatUnits(raw, ORDERBOOK_DECIMALS));
+function formatOrderbookUnits(raw: bigint): number {
+  return Number(formatUnits(raw, ORDERBOOK_DECIMALS));
 }
 
 function formatOrderbookDecimal(value: number): string {
@@ -235,7 +235,7 @@ function normalizeOrderbookLevels(
     return [];
   }
 
-  const parsedLevels: Array<{ priceRaw: BigNumber; sizeRaw: BigNumber }> = [];
+  const parsedLevels: Array<{ priceRaw: bigint; sizeRaw: bigint }> = [];
 
   for (const level of levels) {
     if (!Array.isArray(level) || level.length < 2) {
@@ -244,7 +244,7 @@ function normalizeOrderbookLevels(
 
     const priceRaw = parseOrderbookRawUnits(level[0]);
     const sizeRaw = parseOrderbookRawUnits(level[1]);
-    if (!priceRaw || !sizeRaw || sizeRaw.lte(0)) {
+    if (priceRaw === undefined || sizeRaw === undefined || sizeRaw <= 0n) {
       continue;
     }
 
@@ -252,20 +252,20 @@ function normalizeOrderbookLevels(
   }
 
   parsedLevels.sort((left, right) => {
-    if (left.priceRaw.eq(right.priceRaw)) {
+    if (left.priceRaw === right.priceRaw) {
       return 0;
     }
     if (direction === "asc") {
-      return left.priceRaw.lt(right.priceRaw) ? -1 : 1;
+      return left.priceRaw < right.priceRaw ? -1 : 1;
     }
-    return left.priceRaw.gt(right.priceRaw) ? -1 : 1;
+    return left.priceRaw > right.priceRaw ? -1 : 1;
   });
 
   const visibleLevels = parsedLevels.slice(0, limit);
-  let cumulativeRaw = BigNumber.from(0);
+  let cumulativeRaw = 0n;
 
   return visibleLevels.map((level) => {
-    cumulativeRaw = cumulativeRaw.add(level.sizeRaw);
+    cumulativeRaw += level.sizeRaw;
     return {
       priceRaw: level.priceRaw,
       sizeRaw: level.sizeRaw,
@@ -477,7 +477,7 @@ function formatUnitsDisplay(raw: unknown, decimals: number): string {
     return "N/A";
   }
 
-  return formatHumanDecimal(utils.formatUnits(parsed, decimals));
+  return formatHumanDecimal(formatUnits(parsed, decimals));
 }
 
 function formatProbabilityRaw(raw: unknown): string {
@@ -495,7 +495,7 @@ function formatUsdFromRaw(raw: unknown, decimals = ORDERBOOK_DECIMALS): string {
     return "N/A";
   }
 
-  return formatHumanCurrency(utils.formatUnits(parsed, decimals));
+  return formatHumanCurrency(formatUnits(parsed, decimals));
 }
 
 function formatClobShares(raw: unknown): string {
@@ -509,7 +509,7 @@ function formatOrderValue(rawAmount: unknown, rawPrice: unknown): string {
     return "N/A";
   }
 
-  return formatUsdFromRaw(amount.mul(price).div(BigNumber.from("1000000000000000000")).toString());
+  return formatUsdFromRaw(((amount * price) / 1000000000000000000n).toString());
 }
 
 function formatCompletionLabel(value: unknown): string {
@@ -552,10 +552,10 @@ function deriveCompletion(payload: Record<string, unknown>): string {
   const orderAmount = parseOrderbookRawUnits(order?.amount);
   const status = typeof payload.status === "string" ? payload.status.toLowerCase() : "";
 
-  if (status === "filled" || (filledAmount && orderAmount && filledAmount.gte(orderAmount))) {
+  if (status === "filled" || (filledAmount !== undefined && orderAmount !== undefined && filledAmount >= orderAmount)) {
     return "filled";
   }
-  if (filledAmount && filledAmount.gt(0)) {
+  if (filledAmount !== undefined && filledAmount > 0n) {
     return "partially_filled";
   }
   if (status === "cancelled") {
@@ -628,7 +628,7 @@ export function renderObOrderSubmission(payload: unknown): string {
     ["orderValue", formatOrderValue(order.amount, order.price)]
   ];
 
-  if (parseOrderbookRawUnits(order.minFillAmount)?.gt(0)) {
+  if ((parseOrderbookRawUnits(order.minFillAmount) ?? 0n) > 0n) {
     economicsEntries.push(["minFillShares", formatClobShares(order.minFillAmount)]);
   }
 

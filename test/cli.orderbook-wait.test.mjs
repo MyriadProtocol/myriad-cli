@@ -82,14 +82,14 @@ async function withTempDir(prefix, callback) {
 
 async function writeMockOrderWaitModule(dir) {
   const modulePath = path.join(dir, "mock-order-wait.mjs");
-  const source = `
+const source = `
 import { createRequire } from "node:module";
 
 const require = createRequire(${JSON.stringify(path.join(repoRoot, "package.json"))});
-const { providers } = require("ethers");
+const { JsonRpcProvider } = require("ethers");
 
-providers.JsonRpcProvider.prototype.detectNetwork = async function () {
-  return { chainId: 97, name: "bnbt" };
+JsonRpcProvider.prototype._detectNetwork = async function () {
+  return { chainId: 97n, name: "bnbt" };
 };
 
 if (process.env.MYRIAD_TEST_TTY === "1") {

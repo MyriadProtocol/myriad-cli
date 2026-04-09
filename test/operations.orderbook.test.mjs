@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { providers, utils, Wallet } from "ethers";
+import { AbiCoder, JsonRpcProvider, Wallet, parseUnits } from "ethers";
 import { MyriadOperations } from "../dist/operations.js";
+
+const providers = { JsonRpcProvider };
+const utils = {
+  parseUnits,
+  defaultAbiCoder: AbiCoder.defaultAbiCoder()
+};
 
 const PRIVATE_KEY_A = "0x59c6995e998f97a5a0044966f094538e3f5ed6a45d8f4d35f7f510f0f4f3f0f0";
 const CLOB_CANCEL_ALL_TYPES = {
@@ -43,7 +49,7 @@ function createJsonResponse(payload, status = 200) {
 
 async function signCancelAll(runtime, trader, marketId, timestamp) {
   const wallet = new Wallet(PRIVATE_KEY_A);
-  return wallet._signTypedData(
+  return wallet.signTypedData(
     {
       name: "MyriadCTFExchange",
       version: "1",
@@ -89,7 +95,7 @@ function withFetchStub(routes, callback) {
 async function withFakeTime(callback) {
   const originalDateNow = Date.now;
   const originalSetTimeout = globalThis.setTimeout;
-  const originalDetectNetwork = providers.JsonRpcProvider.prototype.detectNetwork;
+  const originalDetectNetwork = providers.JsonRpcProvider.prototype._detectNetwork;
   let now = 1_700_000_000_000;
 
   Date.now = () => now;
@@ -100,8 +106,8 @@ async function withFakeTime(callback) {
     }
     return 0;
   };
-  providers.JsonRpcProvider.prototype.detectNetwork = async function () {
-    return { chainId: 97, name: "bnbt" };
+  providers.JsonRpcProvider.prototype._detectNetwork = async function () {
+    return { chainId: 97n, name: "bnbt" };
   };
 
   try {
@@ -111,7 +117,7 @@ async function withFakeTime(callback) {
   } finally {
     Date.now = originalDateNow;
     globalThis.setTimeout = originalSetTimeout;
-    providers.JsonRpcProvider.prototype.detectNetwork = originalDetectNetwork;
+    providers.JsonRpcProvider.prototype._detectNetwork = originalDetectNetwork;
   }
 }
 

@@ -1,5 +1,5 @@
 import process from "node:process";
-import { BigNumber, constants, utils, Wallet } from "ethers";
+import { Wallet, TypedDataEncoder, formatUnits, getAddress, hexlify, parseUnits, randomBytes } from "ethers";
 import { AllowancePreference, resolveAllowancePreference } from "./allowance.js";
 import { MyriadApiClient } from "./api.js";
 import {
@@ -227,7 +227,7 @@ type ClaimTarget = {
   outcomeId?: number;
 };
 
-const ONE_E18 = BigNumber.from("1000000000000000000");
+const ONE_E18 = 1000000000000000000n;
 const DEFAULT_IMMEDIATE_ORDER_WAIT_MS = 20000;
 const ORDER_STATUS_POLL_INTERVAL_MS = 500;
 const CLOB_ORDER_TYPES: Record<string, Array<{ name: string; type: string }>> = {
@@ -299,8 +299,8 @@ function normalizePositiveDecimalInput(input: string | number, fieldName: string
 function parseTokenUnits(input: string | number, decimals: number, fieldName: string): string {
   const normalized = normalizePositiveDecimalInput(input, fieldName);
   try {
-    const parsed = utils.parseUnits(normalized, decimals);
-    if (parsed.lte(constants.Zero)) {
+    const parsed = parseUnits(normalized, decimals);
+    if (parsed <= 0n) {
       throw new Error(`${fieldName} must be greater than zero.`);
     }
     return parsed.toString();
@@ -312,15 +312,15 @@ function parseTokenUnits(input: string | number, decimals: number, fieldName: st
 
 function parsePriceUnits(input: string | number): string {
   const normalized = normalizePositiveDecimalInput(input, "price");
-  let parsed: BigNumber;
+  let parsed: bigint;
   try {
-    parsed = utils.parseUnits(normalized, 18);
+    parsed = parseUnits(normalized, 18);
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error);
     throw new Error(`Invalid price. ${details}`);
   }
 
-  if (parsed.lte(constants.Zero) || parsed.gt(ONE_E18)) {
+  if (parsed <= 0n || parsed > ONE_E18) {
     throw new Error("price must be between 0 and 1 inclusive.");
   }
 
@@ -412,16 +412,16 @@ function ensureOrderbookRuntime(runtime: RuntimeConfig) {
   return assertOrderbookConfig(orderbookRuntime);
 }
 
-function formatRawUnits(raw: BigNumber, decimals: number): string {
-  return utils.formatUnits(raw, decimals);
+function formatRawUnits(raw: bigint, decimals: number): string {
+  return formatUnits(raw, decimals);
 }
 
-function multiplyPriceAndAmount(priceRaw: BigNumber, amountRaw: BigNumber): BigNumber {
-  return amountRaw.mul(priceRaw).div(ONE_E18);
+function multiplyPriceAndAmount(priceRaw: bigint, amountRaw: bigint): bigint {
+  return (amountRaw * priceRaw) / ONE_E18;
 }
 
 function generateClobNonce(): string {
-  return BigNumber.from(utils.randomBytes(32)).toString();
+  return BigInt(hexlify(randomBytes(32))).toString();
 }
 
 function sleep(ms: number): Promise<void> {
@@ -506,11 +506,11 @@ async function buildClobCancelAllRequest(
   const wallet = new Wallet(privateKey);
   const domain = buildClobDomain(runtime);
   const typedData = {
-    trader: utils.getAddress(trader),
+    trader: getAddress(trader),
     marketId: marketId ?? 0,
     timestamp: String(Math.floor(Date.now() / 1000))
   };
-  const signature = await wallet._signTypedData(domain, CLOB_CANCEL_ALL_TYPES, typedData);
+  const signature = await wallet.signTypedData(domain, CLOB_CANCEL_ALL_TYPES, typedData);
 
   return {
     trader: typedData.trader,
@@ -533,9 +533,9 @@ function normalizeOrderHashes(orderHashes: string[]): string[] {
   return [...new Set(normalized)];
 }
 
-function estimateBuyCollateralApproval(amountRaw: BigNumber, priceRaw: BigNumber): BigNumber {
+function estimateBuyCollateralApproval(amountRaw: bigint, priceRaw: bigint): bigint {
   // Add a modest fee cushion because the API validates notional + fee, and the fee schedule is not exposed here.
-  return multiplyPriceAndAmount(priceRaw, amountRaw).mul(105).div(100);
+  return (multiplyPriceAndAmount(priceRaw, amountRaw) * 105n) / 100n;
 }
 
 function parseClobStatus(value: unknown): string | undefined {
@@ -546,14 +546,14 @@ function parseClobStatus(value: unknown): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function parseBigNumberValue(value: unknown): BigNumber | undefined {
+function parseBigNumberValue(value: unknown): bigint | undefined {
   if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
     return undefined;
   }
 
   try {
-    const parsed = BigNumber.from(String(value));
-    return parsed.gte(constants.Zero) ? parsed : undefined;
+    const parsed = BigInt(String(value));
+    return parsed >= 0n ? parsed : undefined;
   } catch {
     return undefined;
   }
@@ -570,9 +570,9 @@ function deriveOrderCompletion(record: {
 }): { completion: string; finalized: boolean; observedStatus?: string } {
   const observedStatus = parseClobStatus(record.status);
   const orderAmountRaw = parseBigNumberValue(record.order?.amount);
-  const filledAmountRaw = parseBigNumberValue(record.filledAmount) ?? constants.Zero;
+  const filledAmountRaw = parseBigNumberValue(record.filledAmount) ?? 0n;
 
-  if (observedStatus === "filled" || (orderAmountRaw && filledAmountRaw.gte(orderAmountRaw))) {
+  if (observedStatus === "filled" || (orderAmountRaw !== undefined && filledAmountRaw >= orderAmountRaw)) {
     return {
       completion: "filled",
       finalized: true,
@@ -580,7 +580,7 @@ function deriveOrderCompletion(record: {
     };
   }
 
-  if (filledAmountRaw.gt(constants.Zero)) {
+  if (filledAmountRaw > 0n) {
     return {
       completion: "partially_filled",
       finalized: observedStatus === "cancelled" || observedStatus === "expired",
@@ -630,7 +630,7 @@ function createClobOrder(params: {
   expiration: string;
 }): ClobOrder {
   return {
-    trader: utils.getAddress(params.trader),
+    trader: getAddress(params.trader),
     marketId: String(params.marketId),
     outcomeId: params.outcomeId,
     side: params.side,
@@ -649,8 +649,8 @@ async function signClobOrder(
 ): Promise<{ signature: string; orderHash: string }> {
   const wallet = new Wallet(privateKey);
   const domain = buildClobDomain(runtime);
-  const signature = await wallet._signTypedData(domain, CLOB_ORDER_TYPES, order);
-  const orderHash = utils._TypedDataEncoder.hash(domain, CLOB_ORDER_TYPES, order);
+  const signature = await wallet.signTypedData(domain, CLOB_ORDER_TYPES, order);
+  const orderHash = TypedDataEncoder.hash(domain, CLOB_ORDER_TYPES, order);
   return { signature, orderHash };
 }
 
@@ -660,52 +660,52 @@ function walkOrderbook(params: {
   requestedSharesRaw?: string;
   requestedValueRaw?: string;
 }) {
-  const requestedSharesRaw = params.requestedSharesRaw ? BigNumber.from(params.requestedSharesRaw) : undefined;
-  const requestedValueRaw = params.requestedValueRaw ? BigNumber.from(params.requestedValueRaw) : undefined;
+  const requestedSharesRaw = params.requestedSharesRaw ? BigInt(params.requestedSharesRaw) : undefined;
+  const requestedValueRaw = params.requestedValueRaw ? BigInt(params.requestedValueRaw) : undefined;
 
   if (!requestedSharesRaw && !requestedValueRaw) {
     throw new Error("Internal error: market order walk requires requested shares or value.");
   }
 
   const levels = params.levels.map(([price, amount]) => ({
-    priceRaw: BigNumber.from(price),
-    amountRaw: BigNumber.from(amount)
+    priceRaw: BigInt(price),
+    amountRaw: BigInt(amount)
   }));
 
-  let accumulatedSharesRaw = BigNumber.from(0);
-  let accumulatedValueRaw = BigNumber.from(0);
-  let deepestPriceRaw = BigNumber.from(0);
+  let accumulatedSharesRaw = 0n;
+  let accumulatedValueRaw = 0n;
+  let deepestPriceRaw = 0n;
   const consumedLevels: Array<Record<string, string>> = [];
 
   for (const level of levels) {
-    if (requestedSharesRaw && accumulatedSharesRaw.gte(requestedSharesRaw)) {
+    if (requestedSharesRaw !== undefined && accumulatedSharesRaw >= requestedSharesRaw) {
       break;
     }
-    if (requestedValueRaw && accumulatedValueRaw.gte(requestedValueRaw)) {
+    if (requestedValueRaw !== undefined && accumulatedValueRaw >= requestedValueRaw) {
       break;
     }
 
     let consumedSharesRaw = level.amountRaw;
-    if (requestedSharesRaw) {
-      const remainingShares = requestedSharesRaw.sub(accumulatedSharesRaw);
-      if (level.amountRaw.gt(remainingShares)) {
+    if (requestedSharesRaw !== undefined) {
+      const remainingShares = requestedSharesRaw - accumulatedSharesRaw;
+      if (level.amountRaw > remainingShares) {
         consumedSharesRaw = remainingShares;
       }
-    } else if (requestedValueRaw) {
-      const remainingValue = requestedValueRaw.sub(accumulatedValueRaw);
-      const sharesForValue = remainingValue.mul(ONE_E18).add(level.priceRaw.sub(1)).div(level.priceRaw);
-      if (level.amountRaw.gt(sharesForValue)) {
+    } else if (requestedValueRaw !== undefined) {
+      const remainingValue = requestedValueRaw - accumulatedValueRaw;
+      const sharesForValue = ((remainingValue * ONE_E18) + level.priceRaw - 1n) / level.priceRaw;
+      if (level.amountRaw > sharesForValue) {
         consumedSharesRaw = sharesForValue;
       }
     }
 
-    if (consumedSharesRaw.lte(constants.Zero)) {
+    if (consumedSharesRaw <= 0n) {
       continue;
     }
 
     const consumedValueRaw = multiplyPriceAndAmount(level.priceRaw, consumedSharesRaw);
-    accumulatedSharesRaw = accumulatedSharesRaw.add(consumedSharesRaw);
-    accumulatedValueRaw = accumulatedValueRaw.add(consumedValueRaw);
+    accumulatedSharesRaw += consumedSharesRaw;
+    accumulatedValueRaw += consumedValueRaw;
     deepestPriceRaw = level.priceRaw;
     consumedLevels.push({
       priceRaw: level.priceRaw.toString(),
@@ -718,15 +718,15 @@ function walkOrderbook(params: {
   const requestedShares = requestedSharesRaw?.toString();
   const requestedValue = requestedValueRaw?.toString();
   const shortfallSharesRaw =
-    requestedSharesRaw && accumulatedSharesRaw.lt(requestedSharesRaw)
-      ? requestedSharesRaw.sub(accumulatedSharesRaw).toString()
+    requestedSharesRaw !== undefined && accumulatedSharesRaw < requestedSharesRaw
+      ? (requestedSharesRaw - accumulatedSharesRaw).toString()
       : undefined;
   const shortfallValueRaw =
-    requestedValueRaw && accumulatedValueRaw.lt(requestedValueRaw)
-      ? requestedValueRaw.sub(accumulatedValueRaw).toString()
+    requestedValueRaw !== undefined && accumulatedValueRaw < requestedValueRaw
+      ? (requestedValueRaw - accumulatedValueRaw).toString()
       : undefined;
 
-  if (deepestPriceRaw.isZero()) {
+  if (deepestPriceRaw === 0n) {
     throw new Error(`No ${params.side === "buy" ? "asks" : "bids"} are available in the orderbook.`);
   }
 
@@ -1440,7 +1440,7 @@ export class MyriadOperations {
     const address = await this.resolveWalletAddress(runtime, input.address);
     const nativeSymbol = getNativeSymbol(runtime.chainId);
     const collateralSymbol = getCollateralSymbol(runtime);
-    const collateralAddress = utils.getAddress(runtime.collateralTokenAddress);
+    const collateralAddress = getAddress(runtime.collateralTokenAddress);
 
     return {
       wallet: address,
@@ -1485,7 +1485,7 @@ export class MyriadOperations {
     const minFillAmountRaw =
       input.minFillShares !== undefined ? parseTokenUnits(input.minFillShares, 18, "min-fill-shares") : "0";
 
-    if (BigNumber.from(minFillAmountRaw).gt(BigNumber.from(sharesRaw))) {
+    if (BigInt(minFillAmountRaw) > BigInt(sharesRaw)) {
       throw new Error("min-fill-shares cannot be greater than shares.");
     }
 
@@ -1503,7 +1503,7 @@ export class MyriadOperations {
     const collateralTokenAddress = market.token?.address ?? runtime.collateralTokenAddress;
     const collateralDecimals = getMarketCollateralDecimals(market);
     const allowancePreference = this.resolveEffectiveAllowancePreference(input.allowance);
-    const requiredBuyApprovalRaw = estimateBuyCollateralApproval(BigNumber.from(order.amount), BigNumber.from(order.price));
+    const requiredBuyApprovalRaw = estimateBuyCollateralApproval(BigInt(order.amount), BigInt(order.price));
     const requiredBuyApprovalAmount = formatRawUnits(requiredBuyApprovalRaw, collateralDecimals);
     const approvalPreview =
       side === 0
@@ -1651,7 +1651,7 @@ export class MyriadOperations {
     const { signature, orderHash } = await signClobOrder(privateKey, runtime, order);
     const collateralTokenAddress = market.token?.address ?? runtime.collateralTokenAddress;
     const allowancePreference = this.resolveEffectiveAllowancePreference(input.allowance);
-    const estimatedBuyApprovalRaw = estimateBuyCollateralApproval(BigNumber.from(order.amount), BigNumber.from(order.price));
+    const estimatedBuyApprovalRaw = estimateBuyCollateralApproval(BigInt(order.amount), BigInt(order.price));
     const estimatedBuyApprovalAmount = formatRawUnits(estimatedBuyApprovalRaw, collateralDecimals);
     const approvalPreview =
       side === 0
@@ -1927,7 +1927,7 @@ export class MyriadOperations {
       tokenAddress: market.token?.address ?? runtime.collateralTokenAddress,
       spenderAddress: runtime.obConditionalTokens,
       requiredAmountRaw: amountRaw,
-      requiredAmount: formatRawUnits(BigNumber.from(amountRaw), collateralDecimals),
+      requiredAmount: formatRawUnits(BigInt(amountRaw), collateralDecimals),
       allowancePreference: this.resolveEffectiveAllowancePreference(input.allowance)
     };
 

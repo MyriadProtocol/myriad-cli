@@ -1,4 +1,4 @@
-import { BigNumber, Contract, Wallet, providers, utils } from "ethers";
+import { Contract, JsonRpcProvider, MaxUint256, Wallet, formatEther, formatUnits, getAddress, parseUnits } from "ethers";
 import { AllowancePreference } from "./allowance.js";
 
 const ERC20_ABI = [
@@ -16,6 +16,10 @@ const PANCAKESWAP_V2_ROUTER_ABI = [
 ];
 
 const SLIPPAGE_SCALE = 1_000_000;
+
+function scaleGasLimit(value: bigint): bigint {
+  return (value * 12n) / 10n;
+}
 
 type TokenMeta = {
   decimals: number;
@@ -63,7 +67,7 @@ export type PancakeSwapExecution = {
 };
 
 function normalizeAddress(address: string): string {
-  return utils.getAddress(address);
+  return getAddress(address);
 }
 
 function isSameAddress(a: string, b: string): boolean {
@@ -121,17 +125,19 @@ function extractErrorMessage(error: unknown): string {
 }
 
 export class PancakeSwapV2Service {
-  private readonly provider: providers.JsonRpcProvider;
+  private readonly provider: JsonRpcProvider;
   private readonly wallet: Wallet;
   private readonly router: Contract;
+  private readonly routerAddress: string;
   private readonly tokenContracts = new Map<string, Contract>();
   private readonly tokenMeta = new Map<string, TokenMeta>();
   private wbnbAddress?: string;
 
   constructor(params: { rpcUrl: string; privateKey: string; routerAddress: string }) {
-    this.provider = new providers.JsonRpcProvider(params.rpcUrl);
+    this.provider = new JsonRpcProvider(params.rpcUrl);
     this.wallet = new Wallet(params.privateKey, this.provider);
-    this.router = new Contract(normalizeAddress(params.routerAddress), PANCAKESWAP_V2_ROUTER_ABI, this.wallet);
+    this.routerAddress = normalizeAddress(params.routerAddress);
+    this.router = new Contract(this.routerAddress, PANCAKESWAP_V2_ROUTER_ABI, this.wallet);
   }
 
   getWalletAddress(): string {
@@ -140,7 +146,7 @@ export class PancakeSwapV2Service {
 
   private async nativeSymbol(): Promise<string> {
     const network = await this.provider.getNetwork();
-    return network.chainId === 56 ? "BNB" : "NATIVE";
+    return Number(network.chainId) === 56 ? "BNB" : "NATIVE";
   }
 
   private getTokenContract(tokenAddress: string): Contract {
@@ -176,21 +182,21 @@ export class PancakeSwapV2Service {
     const normalized = normalizeAddress(tokenAddress);
     const tokenContract = this.getTokenContract(normalized);
     const meta = await this.getTokenMeta(normalized);
-    const rawBalance = (await tokenContract.balanceOf(this.wallet.address)) as BigNumber;
+    const rawBalance = (await tokenContract.balanceOf(this.wallet.address)) as bigint;
 
     return {
       address: normalized,
       symbol: meta.symbol,
       decimals: meta.decimals,
       raw: rawBalance.toString(),
-      formatted: utils.formatUnits(rawBalance, meta.decimals)
+      formatted: formatUnits(rawBalance, meta.decimals)
     };
   }
 
   async parseTokenAmount(tokenAddress: string, amount: string): Promise<{ raw: string; symbol: string; decimals: number }> {
     const normalized = normalizeAddress(tokenAddress);
     const meta = await this.getTokenMeta(normalized);
-    const rawAmount = utils.parseUnits(amount, meta.decimals);
+    const rawAmount = parseUnits(amount, meta.decimals);
 
     return {
       raw: rawAmount.toString(),
@@ -199,10 +205,10 @@ export class PancakeSwapV2Service {
     };
   }
 
-  async formatTokenAmount(tokenAddress: string, amountRaw: string | BigNumber): Promise<string> {
+  async formatTokenAmount(tokenAddress: string, amountRaw: string | bigint): Promise<string> {
     const normalized = normalizeAddress(tokenAddress);
     const meta = await this.getTokenMeta(normalized);
-    return utils.formatUnits(BigNumber.from(amountRaw), meta.decimals);
+    return formatUnits(typeof amountRaw === "bigint" ? amountRaw : BigInt(amountRaw), meta.decimals);
   }
 
   private async getWbnbAddress(): Promise<string> {
@@ -215,8 +221,8 @@ export class PancakeSwapV2Service {
   private async getBestPathForExactOutput(params: {
     tokenIn: string;
     tokenOut: string;
-    amountOutRaw: BigNumber;
-  }): Promise<{ path: string[]; amountInQuotedRaw: BigNumber }> {
+    amountOutRaw: bigint;
+  }): Promise<{ path: string[]; amountInQuotedRaw: bigint }> {
     const tokenIn = normalizeAddress(params.tokenIn);
     const tokenOut = normalizeAddress(params.tokenOut);
     const wbnb = await this.getWbnbAddress();
@@ -226,14 +232,14 @@ export class PancakeSwapV2Service {
       candidates.push([tokenIn, wbnb, tokenOut]);
     }
 
-    let best: { path: string[]; amountInQuotedRaw: BigNumber } | undefined;
+    let best: { path: string[]; amountInQuotedRaw: bigint } | undefined;
     const errors: string[] = [];
 
     for (const path of candidates) {
       try {
-        const amounts = (await this.router.getAmountsIn(params.amountOutRaw, path)) as BigNumber[];
+        const amounts = (await this.router.getAmountsIn(params.amountOutRaw, path)) as bigint[];
         const amountIn = amounts[0];
-        if (!best || amountIn.lt(best.amountInQuotedRaw)) {
+        if (!best || amountIn < best.amountInQuotedRaw) {
           best = { path, amountInQuotedRaw: amountIn };
         }
       } catch (error) {
@@ -262,7 +268,7 @@ export class PancakeSwapV2Service {
     }
 
     const [metaIn, metaOut] = await Promise.all([this.getTokenMeta(tokenIn), this.getTokenMeta(tokenOut)]);
-    const amountOutRaw = utils.parseUnits(params.amountOut, metaOut.decimals);
+    const amountOutRaw = parseUnits(params.amountOut, metaOut.decimals);
     const route = await this.getBestPathForExactOutput({
       tokenIn,
       tokenOut,
@@ -270,7 +276,7 @@ export class PancakeSwapV2Service {
     });
 
     const slippagePpm = toSlippagePpm(params.slippage);
-    const amountInMaxRaw = route.amountInQuotedRaw.mul(SLIPPAGE_SCALE + slippagePpm).div(SLIPPAGE_SCALE);
+    const amountInMaxRaw = (route.amountInQuotedRaw * BigInt(SLIPPAGE_SCALE + slippagePpm)) / BigInt(SLIPPAGE_SCALE);
 
     return {
       tokenIn,
@@ -279,18 +285,18 @@ export class PancakeSwapV2Service {
       tokenOutSymbol: metaOut.symbol,
       tokenInDecimals: metaIn.decimals,
       tokenOutDecimals: metaOut.decimals,
-      amountOut: utils.formatUnits(amountOutRaw, metaOut.decimals),
+      amountOut: formatUnits(amountOutRaw, metaOut.decimals),
       amountOutRaw: amountOutRaw.toString(),
-      amountInQuoted: utils.formatUnits(route.amountInQuotedRaw, metaIn.decimals),
+      amountInQuoted: formatUnits(route.amountInQuotedRaw, metaIn.decimals),
       amountInQuotedRaw: route.amountInQuotedRaw.toString(),
-      amountInMax: utils.formatUnits(amountInMaxRaw, metaIn.decimals),
+      amountInMax: formatUnits(amountInMaxRaw, metaIn.decimals),
       amountInMaxRaw: amountInMaxRaw.toString(),
       slippage: params.slippage,
       path: route.path
     };
   }
 
-  private async ensureAllowance(tokenAddress: string, requiredRaw: BigNumber, approvalRaw: BigNumber): Promise<{
+  private async ensureAllowance(tokenAddress: string, requiredRaw: bigint, approvalRaw: bigint): Promise<{
     required: boolean;
     currentAllowanceRaw: string;
     requiredAllowanceRaw: string;
@@ -301,7 +307,7 @@ export class PancakeSwapV2Service {
     const token = this.getTokenContract(tokenAddress);
     const tokenMeta = await this.getTokenMeta(tokenAddress);
 
-    if (approvalRaw.lt(requiredRaw)) {
+    if (approvalRaw < requiredRaw) {
       const [requiredFormatted, approvalFormatted] = await Promise.all([
         this.formatTokenAmount(tokenAddress, requiredRaw),
         this.formatTokenAmount(tokenAddress, approvalRaw)
@@ -312,9 +318,9 @@ export class PancakeSwapV2Service {
       );
     }
 
-    const currentAllowance = (await token.allowance(this.wallet.address, this.router.address)) as BigNumber;
+    const currentAllowance = (await token.allowance(this.wallet.address, this.routerAddress)) as bigint;
 
-    if (currentAllowance.gte(requiredRaw)) {
+    if (currentAllowance >= requiredRaw) {
       return {
         required: false,
         currentAllowanceRaw: currentAllowance.toString(),
@@ -323,11 +329,11 @@ export class PancakeSwapV2Service {
       };
     }
 
-    const sendApprove = async (amount: BigNumber): Promise<string> => {
+    const sendApprove = async (amount: bigint): Promise<string> => {
       try {
-        const estimatedGas = (await token.estimateGas.approve(this.router.address, amount)) as BigNumber;
-        const tx = await token.approve(this.router.address, amount, {
-          gasLimit: estimatedGas.mul(12).div(10)
+        const estimatedGas = await token.approve.estimateGas(this.routerAddress, amount);
+        const tx = await token.approve(this.routerAddress, amount, {
+          gasLimit: scaleGasLimit(estimatedGas)
         });
         const receipt = await tx.wait();
         if (receipt?.status === 0) {
@@ -345,7 +351,7 @@ export class PancakeSwapV2Service {
           throw error;
         }
 
-        const tx = await token.approve(this.router.address, amount, {
+        const tx = await token.approve(this.routerAddress, amount, {
           gasLimit: 120_000
         });
         const receipt = await tx.wait();
@@ -375,12 +381,12 @@ export class PancakeSwapV2Service {
       const [nativeBalanceRaw, nativeSymbol] = await Promise.all([this.provider.getBalance(this.wallet.address), this.nativeSymbol()]);
       throw new Error(
         `Insufficient ${nativeSymbol} for ${tokenMeta.symbol} approval transaction. ` +
-          `Wallet balance: ${utils.formatEther(nativeBalanceRaw)} ${nativeSymbol}. ` +
+          `Wallet balance: ${formatEther(nativeBalanceRaw)} ${nativeSymbol}. ` +
           `RPC reason: ${firstReason}.`
       );
     }
 
-    if (currentAllowance.isZero()) {
+    if (currentAllowance === 0n) {
       throw new Error(
         `Failed to approve ${tokenMeta.symbol} allowance for PancakeSwap router with zero existing allowance. ` +
           `Reason: ${firstReason}`
@@ -389,7 +395,7 @@ export class PancakeSwapV2Service {
 
     try {
       // USDT-style tokens can require resetting allowance to 0 before increasing it.
-      const resetAllowanceTxHash = await sendApprove(BigNumber.from(0));
+      const resetAllowanceTxHash = await sendApprove(0n);
       const approvalTxHash = await sendApprove(approvalRaw);
       return {
         required: true,
@@ -423,11 +429,11 @@ export class PancakeSwapV2Service {
       slippage: params.slippage
     });
 
-    const amountInMaxRaw = BigNumber.from(quote.amountInMaxRaw);
-    const amountInQuotedRaw = BigNumber.from(quote.amountInQuotedRaw);
+    const amountInMaxRaw = BigInt(quote.amountInMaxRaw);
+    const amountInQuotedRaw = BigInt(quote.amountInQuotedRaw);
     const tokenIn = this.getTokenContract(quote.tokenIn);
-    const tokenInBalanceRaw = (await tokenIn.balanceOf(this.wallet.address)) as BigNumber;
-    if (tokenInBalanceRaw.lt(amountInQuotedRaw)) {
+    const tokenInBalanceRaw = (await tokenIn.balanceOf(this.wallet.address)) as bigint;
+    if (tokenInBalanceRaw < amountInQuotedRaw) {
       const [available, quotedNeeded, maxNeeded] = await Promise.all([
         this.formatTokenAmount(quote.tokenIn, tokenInBalanceRaw),
         this.formatTokenAmount(quote.tokenIn, amountInQuotedRaw),
@@ -443,19 +449,19 @@ export class PancakeSwapV2Service {
     const allowancePreference = params.allowancePreference ?? { kind: "required" };
     const approvalRaw =
       allowancePreference.kind === "unlimited"
-        ? BigNumber.from("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+        ? MaxUint256
         : allowancePreference.kind === "custom"
-          ? BigNumber.from((await this.parseTokenAmount(quote.tokenIn, allowancePreference.amount)).raw)
+          ? BigInt((await this.parseTokenAmount(quote.tokenIn, allowancePreference.amount)).raw)
           : amountInMaxRaw;
 
     const approval = await this.ensureAllowance(quote.tokenIn, amountInMaxRaw, approvalRaw);
 
     const deadline = Math.floor(Date.now() / 1000) + (params.deadlineSeconds ?? 600);
 
-    let estimatedGas: BigNumber;
+    let estimatedGas: bigint;
     try {
-      estimatedGas = await this.router.estimateGas.swapTokensForExactTokens(
-        BigNumber.from(quote.amountOutRaw),
+      estimatedGas = await this.router.swapTokensForExactTokens.estimateGas(
+        BigInt(quote.amountOutRaw),
         amountInMaxRaw,
         quote.path,
         this.wallet.address,
@@ -482,13 +488,13 @@ export class PancakeSwapV2Service {
     }
 
     const swapTx = await this.router.swapTokensForExactTokens(
-      BigNumber.from(quote.amountOutRaw),
+      BigInt(quote.amountOutRaw),
       amountInMaxRaw,
       quote.path,
       this.wallet.address,
       deadline,
       {
-        gasLimit: estimatedGas.mul(12).div(10)
+        gasLimit: scaleGasLimit(estimatedGas)
       }
     );
     const receipt = await swapTx.wait();

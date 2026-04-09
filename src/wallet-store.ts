@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promise
 import { homedir } from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { Wallet, utils } from "ethers";
+import { Wallet, getAddress } from "ethers";
 import {
   createSystemKeychainAdapter,
   KeychainAdapter,
@@ -187,7 +187,7 @@ function normalizeImportedWallet(source: WalletImportSource, secret: string): { 
   }
 
   try {
-    const wallet = source === "private-key" ? new Wallet(normalizedSecret) : Wallet.fromMnemonic(normalizedSecret);
+    const wallet = source === "private-key" ? new Wallet(normalizedSecret) : Wallet.fromPhrase(normalizedSecret);
     return {
       privateKey: wallet.privateKey,
       address: wallet.address
@@ -441,7 +441,7 @@ export async function readConfiguredWalletAddress(options?: WalletStoreOptions):
   }
 
   const storedWallet = await parseWalletPayloadFromDisk(paths);
-  return utils.getAddress(storedWallet.address);
+  return getAddress(storedWallet.address);
 }
 
 export async function loadConfiguredWalletPrivateKey(options?: WalletStoreOptions): Promise<string | undefined> {

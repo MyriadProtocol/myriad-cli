@@ -236,7 +236,7 @@ test("ob_orders_cancel_all maps tool args and API overrides", async () => {
     dryRun: true
   });
   assert.deepEqual(capturedOverrides, {
-    apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
+    apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
     apiKey: "override-key"
   });
 });

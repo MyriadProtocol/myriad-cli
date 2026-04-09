@@ -1,4 +1,13 @@
-import { BigNumber, constants, Contract, providers, utils, Wallet } from "ethers";
+import {
+  Contract,
+  JsonRpcProvider,
+  MaxUint256,
+  Wallet,
+  formatEther,
+  getAddress,
+  parseUnits,
+  TransactionRequest
+} from "ethers";
 import { AllowancePreference } from "./allowance.js";
 
 const ERC20_ALLOWANCE_ABI = [
@@ -14,6 +23,10 @@ const ERC1155_APPROVAL_ABI = [
 ];
 
 const ORDERBOOK_MANAGER_ABI = ["function getMarketResolvedOutcome(uint256 marketId) view returns (int8)"];
+
+function scaleGasLimit(value: bigint): bigint {
+  return (value * 12n) / 10n;
+}
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
@@ -59,12 +72,12 @@ function extractErrorMessage(error: unknown): string {
 }
 
 export class EvmExecutionService {
-  private readonly provider: providers.JsonRpcProvider;
+  private readonly provider: JsonRpcProvider;
   private readonly wallet: Wallet;
   private readonly expectedChainId: number;
 
   constructor(params: { rpcUrl: string; privateKey: string; chainId: number }) {
-    this.provider = new providers.JsonRpcProvider(params.rpcUrl);
+    this.provider = new JsonRpcProvider(params.rpcUrl);
     this.wallet = new Wallet(params.privateKey, this.provider);
     this.expectedChainId = params.chainId;
   }
@@ -75,7 +88,8 @@ export class EvmExecutionService {
 
   private async getNativeSymbol(): Promise<string> {
     const network = await this.provider.getNetwork();
-    if (network.chainId === 56 || network.chainId === 97) {
+    const chainId = Number(network.chainId);
+    if (chainId === 56 || chainId === 97) {
       return "BNB";
     }
     return "NATIVE";
@@ -83,19 +97,20 @@ export class EvmExecutionService {
 
   async assertChain(): Promise<void> {
     const network = await this.provider.getNetwork();
-    if (network.chainId !== this.expectedChainId) {
+    const chainId = Number(network.chainId);
+    if (chainId !== this.expectedChainId) {
       throw new Error(
-        `RPC chain mismatch: provider is on chain ${network.chainId}, expected ${this.expectedChainId}. ` +
+        `RPC chain mismatch: provider is on chain ${chainId}, expected ${this.expectedChainId}. ` +
           "Check --rpc-url or --chain-id."
       );
     }
   }
 
-  private async sendApprove(token: Contract, spenderAddress: string, amountRaw: BigNumber): Promise<string> {
+  private async sendApprove(token: Contract, spenderAddress: string, amountRaw: bigint): Promise<string> {
     try {
-      const estimatedGas = (await token.estimateGas.approve(spenderAddress, amountRaw)) as BigNumber;
+      const estimatedGas = await token.approve.estimateGas(spenderAddress, amountRaw);
       const tx = await token.approve(spenderAddress, amountRaw, {
-        gasLimit: estimatedGas.mul(12).div(10)
+        gasLimit: scaleGasLimit(estimatedGas)
       });
       const receipt = await tx.wait();
       if (receipt?.status === 0) {
@@ -126,9 +141,9 @@ export class EvmExecutionService {
 
   private async sendApprovalForAll(token: Contract, operatorAddress: string): Promise<string> {
     try {
-      const estimatedGas = (await token.estimateGas.setApprovalForAll(operatorAddress, true)) as BigNumber;
+      const estimatedGas = await token.setApprovalForAll.estimateGas(operatorAddress, true);
       const tx = await token.setApprovalForAll(operatorAddress, true, {
-        gasLimit: estimatedGas.mul(12).div(10)
+        gasLimit: scaleGasLimit(estimatedGas)
       });
       const receipt = await tx.wait();
       if (receipt?.status === 0) {
@@ -159,7 +174,7 @@ export class EvmExecutionService {
 
   async getTokenDecimals(tokenAddress: string, fallback = 18): Promise<number> {
     try {
-      const token = new Contract(utils.getAddress(tokenAddress), ERC20_ALLOWANCE_ABI, this.provider);
+      const token = new Contract(getAddress(tokenAddress), ERC20_ALLOWANCE_ABI, this.provider);
       const decimalsRaw = await token.decimals();
       return Number(decimalsRaw);
     } catch {
@@ -183,25 +198,26 @@ export class EvmExecutionService {
   }> {
     await this.assertChain();
 
-    const token = new Contract(utils.getAddress(params.tokenAddress), ERC20_ALLOWANCE_ABI, this.wallet);
+    const spenderAddress = getAddress(params.spenderAddress);
+    const token = new Contract(getAddress(params.tokenAddress), ERC20_ALLOWANCE_ABI, this.wallet);
     const [decimalsRaw, symbolRaw, currentAllowanceRawBn] = await Promise.all([
       token.decimals(),
       token.symbol(),
-      token.allowance(this.wallet.address, utils.getAddress(params.spenderAddress))
+      token.allowance(this.wallet.address, spenderAddress)
     ]);
 
     const decimals = Number(decimalsRaw);
     const symbol = String(symbolRaw);
-    const requiredRaw = utils.parseUnits(params.requiredAmount, decimals);
+    const requiredRaw = parseUnits(params.requiredAmount, decimals);
     const preference = params.allowancePreference ?? { kind: "required" };
     const approvalRaw =
       preference.kind === "unlimited"
-        ? constants.MaxUint256
+        ? MaxUint256
         : preference.kind === "custom"
-          ? utils.parseUnits(preference.amount, decimals)
+          ? parseUnits(preference.amount, decimals)
           : requiredRaw;
 
-    if (approvalRaw.lt(requiredRaw)) {
+    if (approvalRaw < requiredRaw) {
       throw new Error(
         `Allowance override is too low for ${symbol}. ` +
           `Required for action: ${params.requiredAmount}, allowance override: ${
@@ -210,8 +226,8 @@ export class EvmExecutionService {
       );
     }
 
-    const currentAllowance = currentAllowanceRawBn as BigNumber;
-    if (currentAllowance.gte(requiredRaw)) {
+    const currentAllowance = currentAllowanceRawBn as bigint;
+    if (currentAllowance >= requiredRaw) {
       return {
         approved: true,
         symbol,
@@ -223,7 +239,7 @@ export class EvmExecutionService {
 
     let firstApproveError: unknown;
     try {
-      const approvalTxHash = await this.sendApprove(token, utils.getAddress(params.spenderAddress), approvalRaw);
+      const approvalTxHash = await this.sendApprove(token, spenderAddress, approvalRaw);
       return {
         approved: false,
         symbol,
@@ -241,18 +257,18 @@ export class EvmExecutionService {
       const [nativeBalanceRaw, nativeSymbol] = await Promise.all([this.provider.getBalance(this.wallet.address), this.getNativeSymbol()]);
       throw new Error(
         `Insufficient ${nativeSymbol} for ERC20 approval transaction. ` +
-          `Wallet balance: ${utils.formatEther(nativeBalanceRaw)} ${nativeSymbol}. ` +
+          `Wallet balance: ${formatEther(nativeBalanceRaw)} ${nativeSymbol}. ` +
           `RPC reason: ${firstReason}.`
       );
     }
 
-    if (currentAllowance.isZero()) {
+    if (currentAllowance === 0n) {
       throw new Error(`Failed to approve ${symbol} allowance. Reason: ${firstReason}`);
     }
 
     try {
-      const resetAllowanceTxHash = await this.sendApprove(token, utils.getAddress(params.spenderAddress), BigNumber.from(0));
-      const approvalTxHash = await this.sendApprove(token, utils.getAddress(params.spenderAddress), approvalRaw);
+      const resetAllowanceTxHash = await this.sendApprove(token, spenderAddress, 0n);
+      const approvalTxHash = await this.sendApprove(token, spenderAddress, approvalRaw);
       return {
         approved: false,
         symbol,
@@ -282,9 +298,10 @@ export class EvmExecutionService {
   }> {
     await this.assertChain();
 
-    const token = new Contract(utils.getAddress(params.tokenAddress), ERC1155_APPROVAL_ABI, this.wallet);
+    const operatorAddress = getAddress(params.operatorAddress);
+    const token = new Contract(getAddress(params.tokenAddress), ERC1155_APPROVAL_ABI, this.wallet);
     const currentApproval = Boolean(
-      await token.isApprovedForAll(this.wallet.address, utils.getAddress(params.operatorAddress))
+      await token.isApprovedForAll(this.wallet.address, operatorAddress)
     );
 
     if (currentApproval) {
@@ -295,7 +312,7 @@ export class EvmExecutionService {
     }
 
     try {
-      const approvalTxHash = await this.sendApprovalForAll(token, utils.getAddress(params.operatorAddress));
+      const approvalTxHash = await this.sendApprovalForAll(token, operatorAddress);
       return {
         approved: false,
         currentApproval,
@@ -310,7 +327,7 @@ export class EvmExecutionService {
         ]);
         throw new Error(
           `Insufficient ${nativeSymbol} for ERC1155 approval transaction. ` +
-            `Wallet balance: ${utils.formatEther(nativeBalanceRaw)} ${nativeSymbol}. ` +
+            `Wallet balance: ${formatEther(nativeBalanceRaw)} ${nativeSymbol}. ` +
             `RPC reason: ${reason}.`
         );
       }
@@ -321,7 +338,7 @@ export class EvmExecutionService {
 
   async getResolvedOutcome(managerAddress: string, marketId: number): Promise<number> {
     await this.assertChain();
-    const manager = new Contract(utils.getAddress(managerAddress), ORDERBOOK_MANAGER_ABI, this.provider);
+    const manager = new Contract(getAddress(managerAddress), ORDERBOOK_MANAGER_ABI, this.provider);
     const result = await manager.getMarketResolvedOutcome(marketId);
     return Number(result);
   }
@@ -339,15 +356,15 @@ export class EvmExecutionService {
   }> {
     await this.assertChain();
 
-    const request: providers.TransactionRequest = {
-      to: utils.getAddress(params.to),
+    const request: TransactionRequest = {
+      to: getAddress(params.to),
       data: params.calldata,
-      value: params.valueWei ? BigNumber.from(params.valueWei) : undefined
+      value: params.valueWei ? BigInt(params.valueWei) : undefined
     };
 
-    let estimatedGas: BigNumber;
+    let estimatedGas: bigint;
     try {
-      estimatedGas = (await this.wallet.estimateGas(request)) as BigNumber;
+      estimatedGas = await this.wallet.estimateGas(request);
     } catch (error) {
       const reason = extractErrorMessage(error);
       throw new Error(
@@ -360,16 +377,18 @@ export class EvmExecutionService {
     try {
       const tx = await this.wallet.sendTransaction({
         ...request,
-        gasLimit: estimatedGas.mul(12).div(10)
+        gasLimit: scaleGasLimit(estimatedGas)
       });
       const receipt = await tx.wait();
+      const effectiveGasPrice =
+        receipt && "effectiveGasPrice" in receipt ? (receipt as { effectiveGasPrice?: bigint | null }).effectiveGasPrice : undefined;
 
       return {
         txHash: tx.hash,
         blockNumber: receipt?.blockNumber,
         gasUsed: receipt?.gasUsed?.toString(),
-        effectiveGasPrice: receipt?.effectiveGasPrice?.toString(),
-        status: receipt?.status
+        effectiveGasPrice: effectiveGasPrice?.toString(),
+        status: receipt?.status ?? undefined
       };
     } catch (error) {
       const reason = extractErrorMessage(error);
@@ -377,7 +396,7 @@ export class EvmExecutionService {
         const [nativeBalanceRaw, nativeSymbol] = await Promise.all([this.provider.getBalance(this.wallet.address), this.getNativeSymbol()]);
         throw new Error(
           `Insufficient ${nativeSymbol} for transaction gas. ` +
-            `Wallet balance: ${utils.formatEther(nativeBalanceRaw)} ${nativeSymbol}. ` +
+            `Wallet balance: ${formatEther(nativeBalanceRaw)} ${nativeSymbol}. ` +
             `RPC reason: ${reason}.`
         );
       }

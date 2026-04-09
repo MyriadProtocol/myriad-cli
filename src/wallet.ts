@@ -1,4 +1,4 @@
-import { Contract, providers, utils } from "ethers";
+import { Contract, JsonRpcProvider, formatEther, formatUnits, getAddress } from "ethers";
 
 const ERC20_ABI = [
   "function symbol() view returns (string)",
@@ -38,10 +38,10 @@ function uniqueAddressesWithLabels(entries: Array<{ label: string; address: stri
 }
 
 export class WalletBalanceService {
-  private readonly provider: providers.JsonRpcProvider;
+  private readonly provider: JsonRpcProvider;
 
   constructor(rpcUrl: string) {
-    this.provider = new providers.JsonRpcProvider(rpcUrl);
+    this.provider = new JsonRpcProvider(rpcUrl);
   }
 
   async getNativeBalance(address: string, symbol: string): Promise<NativeBalance> {
@@ -49,7 +49,7 @@ export class WalletBalanceService {
     return {
       symbol,
       raw: raw.toString(),
-      formatted: utils.formatEther(raw)
+      formatted: formatEther(raw)
     };
   }
 
@@ -58,17 +58,17 @@ export class WalletBalanceService {
 
     return Promise.all(
       uniqueTokens.map(async (entry) => {
-        const token = new Contract(utils.getAddress(entry.address), ERC20_ABI, this.provider);
+        const token = new Contract(getAddress(entry.address), ERC20_ABI, this.provider);
         const [symbolRaw, decimalsRaw, balanceRaw] = await Promise.all([token.symbol(), token.decimals(), token.balanceOf(address)]);
         const decimals = Number(decimalsRaw);
 
         return {
           label: entry.label,
-          address: utils.getAddress(entry.address),
+          address: getAddress(entry.address),
           symbol: String(symbolRaw),
           decimals,
           raw: balanceRaw.toString(),
-          formatted: utils.formatUnits(balanceRaw, decimals)
+          formatted: formatUnits(balanceRaw, decimals)
         };
       })
     );

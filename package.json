@@ -42,7 +42,7 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "commander": "^12.1.0",
     "dotenv": "^16.4.5",
-    "ethers": "^5.8.0",
+    "ethers": "^6.16.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

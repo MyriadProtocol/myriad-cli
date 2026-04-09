@@ -1,12 +1,74 @@
+`polkamarkets-js` provides JavaScript bindings for the Myriad CLOB (Central Limit Order Book) smart contracts. This guide covers how to **sign and place orders**, **manage positions** (split, merge, redeem), and **interact with NegRisk events** (multi-outcome markets).
+
+For the AMM-based SDK documentation, see the [JavaScript SDK docs](https://docs.myriad.markets/builders/javascript-sdk).
+
+---
+
+## Installation
+
+```bash
+# npm
+npm install polkamarkets-js
+
+# yarn
+yarn add polkamarkets-js
+```
+
+---
+
+## Initializing the Application
+
+```jsx
+import * as polkamarketsjs from 'polkamarkets-js';
+
+const polkamarkets = new polkamarketsjs.Application({
+  web3Provider: '<https://bsc-dataseed.binance.org>',
+  web3PrivateKey: '<your_private_key>', // optional: omit for wallet-based signing
+});
+```
+
+---
+
+## Contract Instances
+
+The Myriad Order Book system is composed of five core contracts. Create instances using the factory methods on `polkamarkets`:
+
+```jsx
+// Market Manager — create, resolve, pause markets
+const manager = polkamarkets.getPredictionMarketV3ManagerCLOBContract({
+  contractAddress: '0x<ManagerAddress>',
+});
+
+// Conditional Tokens — ERC1155 outcome shares (split, merge, redeem)
+const ct = polkamarkets.getConditionalTokensContract({
+  contractAddress: '0x<ConditionalTokensAddress>',
+});
+
+// Exchange — on-chain order matching and cancellation
+const exchange = polkamarkets.getMyriadCTFExchangeContract({
+  contractAddress: '0x<ExchangeAddress>',
+});
+
+// Fee Module — fee configuration and queries
+const feeModule = polkamarkets.getFeeModuleContract({
+  contractAddress: '0x<FeeModuleAddress>',
+});
+
+// ERC20 collateral token (USD1)
+const erc20 = polkamarkets.getERC20Contract({
+  contractAddress: '0x<CollateralTokenAddress>',
+});
+```
+
 ### Contract Addresses
 
-See the [Contract Addresses](https://docs.myriad.markets/builders/javascript-sdk#bnb-chain) page for deployed addresses on each chain.
+The Myriad Order Book Contracts are deployed on BNB Smart Chain. See the [Contract Addresses](https://docs.myriad.markets/builders/contract-addresses) page.
 
 ---
 
 ## Architecture Overview
 
-The CLOB system separates order matching from position settlement:
+The Myriad Order Book system separates order matching from position settlement:
 
 ```
 Trader (off-chain)          API                     Exchange (on-chain)
@@ -27,7 +89,11 @@ Trader (off-chain)          API                     Exchange (on-chain)
        │  ◄─ filled          │                              │
 ```
 
-**Orders are signed off-chain and submitted to the API** (see the [CLOB API Reference](./MYRIAD_ORDER_BOOK_API_REFERENCE.md)). The matcher service settles fills on-chain.
+**Orders are signed off-chain and submitted to the API** (see the [Order Book API Reference](https://docs.myriad.markets/builders/myriad-order-book/order-book-api)). The matcher service settles fills on-chain. The SDK is used for:
+
+1. **Position management** — split, merge, and redeem outcome tokens
+2. **Order cancellation** — cancel orders on-chain
+3. **Market queries** — read market state, prices, fees
 
 ---
 
@@ -35,7 +101,7 @@ Trader (off-chain)          API                     Exchange (on-chain)
 
 ### Concepts
 
-Each CLOB market has two outcomes: **YES (0)** and **NO (1)**. Outcome tokens are ERC1155 tokens managed by the `ConditionalTokens` contract. The token ID formula is:
+Each Myriad Order Book market has two outcomes: **YES (0)** and **NO (1)**. Outcome tokens are ERC1155 tokens managed by the `ConditionalTokens` contract. The token ID formula is:
 
 ```
 tokenId = (marketId << 1) | outcomeId
@@ -65,7 +131,7 @@ await ct.splitPosition({
 });
 ```
 
-After splitting, you hold equal amounts of YES and NO shares. You can then sell one side on the CLOB to express a directional view.
+After splitting, you hold equal amounts of YES and NO shares. You can then sell one side on the order book to express a directional view.
 
 ### 1.2 Merge Positions
 
@@ -197,7 +263,7 @@ console.log(result);
 // { orderHash: '0x...', status: 'open', timeInForce: 'GTC' }
 ```
 
-See the [CLOB API Reference](https://www.notion.so/myriad-protocol-api/CLOB_API_REFERENCE.md) for full endpoint documentation.
+See the [Order Book API Reference](./MYRIAD_ORDERBOOK_API_REFERENCE.md) for full endpoint documentation.
 
 ### 2.3 Cancel Orders (On-Chain)
 
@@ -291,39 +357,6 @@ const tokenIds = await manager.getOutcomeTokenIds({ marketId: 42 });
 // [yesTokenId, noTokenId]
 ```
 
-### 4.2 Create Market (Admin)
-
-```jsx
-await manager.createMarket({
-  closesAt: Math.floor(Date.now() / 1000) + 86400 * 7, // 1 week
-  question: 'Will ETH hit $10k?',
-  image: '<https://example.com/image.png>',
-  feeModule: '0x<FeeModuleAddress>',
-  oracle: '0x<OracleAddress>',
-  oracleData: '0x',
-});
-```
-
-### 4.3 Resolve Market (Admin)
-
-```jsx
-// Oracle-based resolution (permissionless if oracle reports result)
-await manager.resolveMarket({ marketId: 42 });
-
-// Admin resolution
-await manager.adminResolveMarket({
-  marketId: 42,
-  outcomeId: 0, // YES wins
-});
-```
-
-### 4.4 Pause / Unpause
-
-```jsx
-await manager.pauseMarket({ marketId: 42, paused: true });
-await manager.pauseMarket({ marketId: 42, paused: false });
-```
-
 ---
 
 ## 5. Fee Module
@@ -343,40 +376,13 @@ const takerFees = await feeModule.getMarketTakerFees(42);
 
 Fee tiers are defined per-market and can vary by price bucket. Each bucket covers 1% of the price range (0–1). The fee is expressed in basis points (BPS), where 100 BPS = 1%.
 
-### 5.2 Set Market Fees (Admin)
-
-```jsx
-// Flat fee: 1% maker, 2% taker at all price levels
-const makerFeeBps = Array(100).fill(100);  // 1%
-const takerFeeBps = Array(100).fill(200);  // 2%
-
-await feeModule.setMarketFees({
-  marketId: 42,
-  makerFeeBps,
-  takerFeeBps,
-});
-```
-
-### 5.3 Fee Accounting
-
-```jsx
-// Check accrued fees
-const accrued = await feeModule.accruedFees('0x<CollateralTokenAddress>');
-console.log('Accrued fees:', accrued);
-
-// Withdraw fees to treasury (FEE_ADMIN only)
-await feeModule.withdrawFees(
-  '0x<CollateralTokenAddress>',
-  '0x<TreasuryAddress>',
-  accrued,
-);
-```
+See the full [Fee schedule](https://docs.myriad.markets/trading/order-book#336c9e49da8280449348cdcea129c5d6).
 
 ---
 
 ## 6. NegRisk Events (Multi-Outcome Markets)
 
-NegRisk events group multiple binary markets into a single mutually exclusive event. For example, "Who will win the election?" might have outcomes: A, B, C, Other. Each outcome is a separate binary CLOB market.
+NegRisk events group multiple binary markets into a single mutually exclusive event. For example, "Who will win the election?" might have outcomes: A, B, C, Other. Each outcome is a separate binary order book market.
 
 NegRisk operations use the `NegRiskAdapter` contract, which wraps collateral into `WrappedCollateral` (WCOL) and manages the split/merge lifecycle.
 
@@ -438,35 +444,7 @@ When BUY-YES orders across all outcomes of a NegRisk event have prices that sum 
 
 ---
 
-## 7. Admin Registry (Roles)
-
-The CLOB system uses role-based access control:
-
-| Role | Description |
-| --- | --- |
-| `DEFAULT_ADMIN_ROLE` | Full admin, can grant/revoke roles |
-| `MARKET_ADMIN_ROLE` | Create markets and NegRisk events |
-| `OPERATOR_ROLE` | Match orders on the exchange |
-| `FEE_ADMIN_ROLE` | Set fees and withdraw treasury |
-| `RESOLUTION_ADMIN_ROLE` | Resolve and void markets |
-
-```jsx
-// Check if an address has a role
-const hasRole = await adminRegistry.hasRole({
-  role: ethers.keccak256(ethers.toUtf8Bytes('OPERATOR_ROLE')),
-  account: '0x...',
-});
-
-// Grant a role (requires DEFAULT_ADMIN_ROLE)
-await adminRegistry.grantRole({
-  role: ethers.keccak256(ethers.toUtf8Bytes('OPERATOR_ROLE')),
-  account: '0x<OperatorAddress>',
-});
-```
-
----
-
-## Complete Example: CLOB Trading Flow
+## Complete Example: Order Book Trading Flow
 
 ```jsx
 import * as polkamarketsjs from 'polkamarkets-js';
@@ -579,4 +557,4 @@ console.log('Winnings redeemed!');
 | `POST /positions/neg-risk/split` | NegRisk split calldata |
 | `POST /positions/neg-risk/merge` | NegRisk merge calldata |
 
-Full API documentation: [CLOB API Reference](https://www.notion.so/myriad-protocol-api/CLOB_API_REFERENCE.md)
+Full API documentation: [Order Book API Reference](./MYRIAD_ORDERBOOK_API_REFERENCE.md)

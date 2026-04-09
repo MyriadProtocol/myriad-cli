@@ -168,6 +168,9 @@ myriad ob markets orderbook --market-id 42 --outcome-id 0 --json
 myriad ob limit buy --market-id 42 --outcome-id 0 --price 0.55 --shares 5 --json
 myriad ob market sell --market-id 42 --outcome-id 1 --shares 2 --dry-run --json
 myriad ob orders list --json
+myriad ob orders cancel batch 0xORDER1 0xORDER2 --dry-run --json
+myriad ob orders cancel market --market-id 42 --dry-run --json
+myriad ob orders cancel all --dry-run --json
 myriad ob positions list --json
 myriad ob positions split --market-id 42 --amount 10 --dry-run --json
 myriad ob positions redeem --market-id 42 --dry-run --json

@@ -204,6 +204,11 @@ export type ObOrderCancelAllInput = MarketReferenceInput & {
   dryRun?: boolean;
 };
 
+export type ObOrderCancelBatchInput = {
+  orderHashes: string[];
+  dryRun?: boolean;
+};
+
 export type ObPositionActionInput = MarketReferenceInput & {
   amount: string | number;
   allowance?: string;
@@ -236,6 +241,13 @@ const CLOB_ORDER_TYPES: Record<string, Array<{ name: string; type: string }>> = 
     { name: "minFillAmount", type: "uint256" },
     { name: "nonce", type: "uint256" },
     { name: "expiration", type: "uint256" }
+  ]
+};
+const CLOB_CANCEL_ALL_TYPES: Record<string, Array<{ name: string; type: string }>> = {
+  CancelAll: [
+    { name: "trader", type: "address" },
+    { name: "marketId", type: "uint256" },
+    { name: "timestamp", type: "uint256" }
   ]
 };
 
@@ -440,6 +452,17 @@ function buildClobCancelRequest(record: ClobOrderRecord, defaultNetworkId: numbe
   signature: string;
   network_id: number;
 } {
+  const payload = buildClobSignedOrderPayload(record);
+  return {
+    ...payload,
+    network_id: record.networkId ?? defaultNetworkId
+  };
+}
+
+function buildClobSignedOrderPayload(record: ClobOrderRecord): {
+  order: ClobOrder;
+  signature: string;
+} {
   if (!record.order) {
     throw new Error(`Order ${record.orderHash} is missing its signed order payload.`);
   }
@@ -448,9 +471,66 @@ function buildClobCancelRequest(record: ClobOrderRecord, defaultNetworkId: numbe
   }
   return {
     order: record.order,
-    signature: record.signature,
-    network_id: record.networkId ?? defaultNetworkId
+    signature: record.signature
   };
+}
+
+function buildClobCancelBatchRequest(
+  records: ClobOrderRecord[],
+  networkId: number
+): {
+  orders: Array<{
+    order: ClobOrder;
+    signature: string;
+  }>;
+  network_id: number;
+} {
+  return {
+    orders: records.map((record) => buildClobSignedOrderPayload(record)),
+    network_id: networkId
+  };
+}
+
+async function buildClobCancelAllRequest(
+  privateKey: string,
+  runtime: RuntimeConfig & { obExchangeAddress: string },
+  trader: string,
+  marketId?: number
+): Promise<{
+  trader: string;
+  timestamp: string;
+  signature: string;
+  market_id?: number;
+  network_id: number;
+}> {
+  const wallet = new Wallet(privateKey);
+  const domain = buildClobDomain(runtime);
+  const typedData = {
+    trader: utils.getAddress(trader),
+    marketId: marketId ?? 0,
+    timestamp: String(Math.floor(Date.now() / 1000))
+  };
+  const signature = await wallet._signTypedData(domain, CLOB_CANCEL_ALL_TYPES, typedData);
+
+  return {
+    trader: typedData.trader,
+    timestamp: typedData.timestamp,
+    signature,
+    ...(marketId !== undefined ? { market_id: marketId } : {}),
+    network_id: runtime.chainId
+  };
+}
+
+function normalizeOrderHashes(orderHashes: string[]): string[] {
+  const normalized = orderHashes
+    .map((orderHash) => orderHash.trim())
+    .filter((orderHash) => orderHash.length > 0);
+
+  if (normalized.length === 0) {
+    throw new Error("Provide at least one order hash.");
+  }
+
+  return [...new Set(normalized)];
 }
 
 function estimateBuyCollateralApproval(amountRaw: BigNumber, priceRaw: BigNumber): BigNumber {
@@ -716,6 +796,13 @@ function ensureNetworkMatch(market: Market, runtime: RuntimeConfig): void {
 
 function isSameAddress(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function assertOrderOwnedByWallet(record: ClobOrderRecord, walletAddress: string): void {
+  const traderAddress = record.order?.trader;
+  if (!traderAddress || !isSameAddress(traderAddress, walletAddress)) {
+    throw new Error(`Configured wallet ${walletAddress} does not own order ${record.orderHash}.`);
+  }
 }
 
 function resolveStableSwapPair(runtime: RuntimeConfig, spendTokenAddress: string):
@@ -1719,11 +1806,7 @@ export class MyriadOperations {
     const apiClient = this.createApiClient(overrides);
     const walletAddress = await this.resolveWalletAddress(runtime);
     const existingOrder = await apiClient.getOrder(input.orderHash);
-    const traderAddress = existingOrder.order?.trader;
-
-    if (!traderAddress || !isSameAddress(traderAddress, walletAddress)) {
-      throw new Error(`Configured wallet ${walletAddress} does not own order ${input.orderHash}.`);
-    }
+    assertOrderOwnedByWallet(existingOrder, walletAddress);
 
     const cancelRequest = buildClobCancelRequest(existingOrder, runtime.chainId);
 
@@ -1745,81 +1828,87 @@ export class MyriadOperations {
   }
 
   async obOrdersCancelAll(input: ObOrderCancelAllInput, overrides?: ApiRequestOverrides): Promise<unknown> {
-    const runtime = this.runtimeForApi(overrides);
+    const runtime = ensureOrderbookRuntime(this.runtimeForApi(overrides));
     const apiClient = this.createApiClient(overrides);
-    const walletAddress = await this.resolveWalletAddress(runtime);
-    const marketReference = resolveMarketReference(input, runtime.chainId);
-    const market = await resolveOrderbookMarket(apiClient, marketReference, runtime);
-    const pageSize = 100;
-    let offset = 0;
-    const openOrders: ClobOrderRecord[] = [];
-
-    while (true) {
-      const response = await apiClient.listOrders({
-        trader: walletAddress,
-        network_id: runtime.chainId,
-        market_id: market.id,
-        status: "open",
-        limit: pageSize,
-        offset
-      });
-      const page = response.data.filter((record) => {
-        const traderAddress = record.order?.trader;
-        return traderAddress ? isSameAddress(traderAddress, walletAddress) : true;
-      });
-
-      openOrders.push(...page);
-
-      const hasNextPage = response.pagination?.hasNext === true || response.data.length === pageSize;
-      if (!hasNextPage || response.data.length === 0) {
-        break;
-      }
-      offset += response.data.length;
-    }
-
-    const cancelRequests = openOrders.map((record) => ({
-      orderHash: record.orderHash,
-      cancelRequest: buildClobCancelRequest(record, runtime.chainId)
-    }));
+    const { privateKey, walletAddress } = await this.resolveOrderbookSigner(runtime);
+    const hasMarketScope = input.marketId !== undefined || input.marketSlug !== undefined;
+    const market = hasMarketScope
+      ? await resolveOrderbookMarket(apiClient, resolveMarketReference(input, runtime.chainId), runtime)
+      : undefined;
+    const cancelAllRequest = await buildClobCancelAllRequest(privateKey, runtime, walletAddress, market?.id);
 
     if (input.dryRun) {
       return {
         wallet: walletAddress,
-        marketId: market.id,
-        marketTitle: market.title,
-        totalOpenOrders: openOrders.length,
-        cancelRequests,
+        ...(market ? { marketId: market.id, marketTitle: market.title } : {}),
+        cancelAllRequest,
         dryRun: true
       };
     }
 
-    const results: Array<{ orderHash: string; ok: boolean; response?: Record<string, unknown>; error?: string }> = [];
-
-    for (const request of cancelRequests) {
-      try {
-        const response = await apiClient.cancelOrder(request.orderHash, request.cancelRequest);
-        results.push({
-          orderHash: request.orderHash,
-          ok: true,
-          response
-        });
-      } catch (error) {
-        results.push({
-          orderHash: request.orderHash,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
+    const response = await apiClient.cancelAllOrders(cancelAllRequest);
+    const cancelledCount = response.cancelled_count;
+    const cancelled =
+      typeof cancelledCount === "number"
+        ? cancelledCount
+        : typeof cancelledCount === "string" && cancelledCount.trim().length > 0
+          ? Number(cancelledCount)
+          : undefined;
+    const marketIdsAffected = Array.isArray(response.market_ids_affected)
+      ? response.market_ids_affected.map((marketId) => String(marketId))
+      : undefined;
 
     return {
       wallet: walletAddress,
-      marketId: market.id,
-      marketTitle: market.title,
-      totalOpenOrders: openOrders.length,
-      cancelled: results.filter((result) => result.ok).length,
-      failed: results.filter((result) => !result.ok).length,
-      results,
+      ...(market ? { marketId: market.id, marketTitle: market.title } : {}),
+      cancelled,
+      marketIdsAffected,
+      response,
+      dryRun: false
+    };
+  }
+
+  async obOrdersCancelBatch(input: ObOrderCancelBatchInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = ensureOrderbookRuntime(this.runtimeForApi(overrides));
+    const apiClient = this.createApiClient(overrides);
+    const walletAddress = await this.resolveWalletAddress(runtime);
+    const orderHashes = normalizeOrderHashes(input.orderHashes);
+    const existingOrders = await Promise.all(orderHashes.map((orderHash) => apiClient.getOrder(orderHash)));
+
+    for (const record of existingOrders) {
+      assertOrderOwnedByWallet(record, walletAddress);
+      if (record.networkId !== undefined && record.networkId !== runtime.chainId) {
+        throw new Error(
+          `Order ${record.orderHash} uses network ${record.networkId}, runtime is configured for ${runtime.chainId}. ` +
+            "Use --chain-id and matching deployment addresses."
+        );
+      }
+    }
+
+    const cancelBatchRequest = buildClobCancelBatchRequest(existingOrders, runtime.chainId);
+
+    if (input.dryRun) {
+      return {
+        wallet: walletAddress,
+        orderHashes,
+        totalOrders: existingOrders.length,
+        cancelBatchRequest,
+        dryRun: true
+      };
+    }
+
+    const response = await apiClient.cancelOrdersBatch(cancelBatchRequest);
+    const cancelledOrderHashes = Array.isArray(response.cancelled) ? response.cancelled.map((orderHash) => String(orderHash)) : [];
+    const errors = Array.isArray(response.errors) ? response.errors : [];
+
+    return {
+      wallet: walletAddress,
+      orderHashes,
+      cancelled: cancelledOrderHashes.length,
+      failed: errors.length,
+      cancelledOrderHashes,
+      errors,
+      response,
       dryRun: false
     };
   }

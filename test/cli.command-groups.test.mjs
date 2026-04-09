@@ -76,3 +76,43 @@ for (const commandCase of commandCases) {
     );
   });
 }
+
+test("myriad ob orders cancel help shows single, all, market, and batch modes", async () => {
+  const result = await runCli(["ob", "orders", "cancel", "--help"]);
+
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /Usage: myriad ob orders cancel/);
+  assert.match(result.stdout, /\[orderHash\]/);
+  assert.match(result.stdout, /\ball\b/);
+  assert.match(result.stdout, /\bmarket\b/);
+  assert.match(result.stdout, /\bbatch\b/);
+});
+
+test("myriad ob orders cancel all help keeps market selector compatibility", async () => {
+  const result = await runCli(["ob", "orders", "cancel", "all", "--help"]);
+
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /--market-id <id>/);
+  assert.match(result.stdout, /--market-slug <slug>/);
+});
+
+test("myriad ob orders cancel all dry-run returns a local payload without hitting the API", async () => {
+  const result = await runCli([
+    "--private-key",
+    "0x59c6995e998f97a5a0044966f094538e3f5ed6a45d8f4d35f7f510f0f4f3f0f0",
+    "--json",
+    "ob",
+    "orders",
+    "cancel",
+    "all",
+    "--dry-run"
+  ]);
+
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /"dryRun": true/);
+  assert.match(result.stdout, /"cancelAllRequest"/);
+  assert.match(result.stdout, /"signature": "0x[0-9a-f]{130}"/i);
+});

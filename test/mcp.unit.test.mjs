@@ -75,6 +75,9 @@ function createOperationsStub(overrides = {}) {
     async obOrdersCancelAll() {
       return { ok: true };
     },
+    async obOrdersCancelBatch() {
+      return { ok: true };
+    },
     async obPositionsList() {
       return { ok: true };
     },
@@ -182,7 +185,7 @@ test("ob_positions_list maps tool args and API overrides", async () => {
         marketId: 42,
         page: 2,
         limit: 5,
-        apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+        apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
         apiKey: "override-key"
       }
     });
@@ -197,7 +200,7 @@ test("ob_positions_list maps tool args and API overrides", async () => {
     limit: 5
   });
   assert.deepEqual(capturedOverrides, {
-    apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+    apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
     apiKey: "override-key"
   });
 });
@@ -233,7 +236,69 @@ test("ob_orders_cancel_all maps tool args and API overrides", async () => {
     dryRun: true
   });
   assert.deepEqual(capturedOverrides, {
-    apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+    apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
+    apiKey: "override-key"
+  });
+});
+
+test("ob_orders_cancel_all supports all-markets cancellation without a selector", async () => {
+  let capturedInput;
+
+  const operations = createOperationsStub({
+    async obOrdersCancelAll(input) {
+      capturedInput = input;
+      return { ok: true };
+    }
+  });
+
+  await withInMemoryClient(operations, async (client) => {
+    const result = await client.callTool({
+      name: "ob_orders_cancel_all",
+      arguments: {
+        dryRun: true
+      }
+    });
+
+    assert.notEqual(result.isError, true);
+  });
+
+  assert.deepEqual(capturedInput, {
+    dryRun: true
+  });
+});
+
+test("ob_orders_cancel_batch maps tool args and API overrides", async () => {
+  let capturedInput;
+  let capturedOverrides;
+
+  const operations = createOperationsStub({
+    async obOrdersCancelBatch(input, apiOverrides) {
+      capturedInput = input;
+      capturedOverrides = apiOverrides;
+      return { ok: true };
+    }
+  });
+
+  await withInMemoryClient(operations, async (client) => {
+    const result = await client.callTool({
+      name: "ob_orders_cancel_batch",
+      arguments: {
+        orderHashes: ["0xaaa", "0xbbb"],
+        dryRun: true,
+        apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
+        apiKey: "override-key"
+      }
+    });
+
+    assert.notEqual(result.isError, true);
+  });
+
+  assert.deepEqual(capturedInput, {
+    orderHashes: ["0xaaa", "0xbbb"],
+    dryRun: true
+  });
+  assert.deepEqual(capturedOverrides, {
+    apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
     apiKey: "override-key"
   });
 });
@@ -259,7 +324,7 @@ test("ob_market_buy maps waitMs and API overrides", async () => {
         shares: "2",
         waitMs: 2500,
         dryRun: true,
-        apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+        apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
         apiKey: "override-key"
       }
     });
@@ -275,7 +340,7 @@ test("ob_market_buy maps waitMs and API overrides", async () => {
     dryRun: true
   });
   assert.deepEqual(capturedOverrides, {
-    apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+    apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
     apiKey: "override-key"
   });
 });

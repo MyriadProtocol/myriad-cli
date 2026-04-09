@@ -99,11 +99,15 @@ test("myriad-orderbook skill files cover the full order book workflow", () => {
   assert.match(skill, /production BNB Smart Chain workflow by default/i);
   assert.match(skill, /ob markets orderbook --render/);
   assert.match(skill, /ob orders cancel all/);
+  assert.match(skill, /ob orders cancel batch/);
+  assert.match(skill, /ob orders cancel market/);
   assert.match(skill, /ob positions redeem/);
 
   assert.match(recipes, /ob markets list/);
   assert.match(recipes, /ob limit buy/);
   assert.match(recipes, /ob market sell/);
+  assert.match(recipes, /ob orders cancel batch/);
+  assert.match(recipes, /ob orders cancel market/);
   assert.match(recipes, /ob positions list/);
   assert.match(recipes, /ob positions split/);
   assert.match(recipes, /ob positions merge/);
@@ -124,6 +128,7 @@ test("existing skill docs and README cross-link orderbook and codex support", ()
   assert.match(trade, /\$myriad-orderbook/);
   assert.match(claims, /ob positions redeem/);
   assert.match(mcp, /ob_orders_cancel_all/);
+  assert.match(mcp, /ob_orders_cancel_batch/);
   assert.match(mcp, /ob_positions_redeem/);
 
   assert.match(readme, /skills\/myriad-orderbook\/SKILL\.md/);

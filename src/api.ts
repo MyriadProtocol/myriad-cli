@@ -284,6 +284,32 @@ export class MyriadApiClient {
     });
   }
 
+  async cancelOrdersBatch(request: {
+    orders: Array<{
+      order: ClobOrder;
+      signature: string;
+    }>;
+    network_id?: number;
+  }): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("orders/cancel-batch", {
+      method: "POST",
+      body: request
+    });
+  }
+
+  async cancelAllOrders(request: {
+    trader: string;
+    timestamp: string;
+    signature: string;
+    market_id?: number;
+    network_id?: number;
+  }): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("orders/cancel-all", {
+      method: "POST",
+      body: request
+    });
+  }
+
   async splitPosition(request: { market_id: number; amount: string; network_id?: number }): Promise<PositionCalldataResponse> {
     const response = await this.request<PositionCalldataResponse | { data: PositionCalldataResponse }>("positions/split", {
       method: "POST",

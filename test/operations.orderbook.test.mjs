@@ -4,10 +4,17 @@ import { providers, utils, Wallet } from "ethers";
 import { MyriadOperations } from "../dist/operations.js";
 
 const PRIVATE_KEY_A = "0x59c6995e998f97a5a0044966f094538e3f5ed6a45d8f4d35f7f510f0f4f3f0f0";
+const CLOB_CANCEL_ALL_TYPES = {
+  CancelAll: [
+    { name: "trader", type: "address" },
+    { name: "marketId", type: "uint256" },
+    { name: "timestamp", type: "uint256" }
+  ]
+};
 
 function createObRuntime(overrides = {}) {
   return {
-    apiBaseUrl: "https://api-ob-staging.myriadprotocol.com",
+    apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
     apiKey: "test-api-key",
     chainId: 97,
     rpcUrl: "https://rpc.example.com",
@@ -32,6 +39,24 @@ function createJsonResponse(payload, status = 200) {
       return JSON.stringify(payload);
     }
   };
+}
+
+async function signCancelAll(runtime, trader, marketId, timestamp) {
+  const wallet = new Wallet(PRIVATE_KEY_A);
+  return wallet._signTypedData(
+    {
+      name: "MyriadCTFExchange",
+      version: "1",
+      chainId: runtime.chainId,
+      verifyingContract: runtime.obExchangeAddress
+    },
+    CLOB_CANCEL_ALL_TYPES,
+    {
+      trader,
+      marketId,
+      timestamp
+    }
+  );
 }
 
 function withFetchStub(routes, callback) {
@@ -993,101 +1018,355 @@ test("obPositionsRedeem dry-run selects redeem-voided when manager reports a voi
   }
 });
 
-test("obOrdersCancelAll cancels all open orders on a market selected by slug", async () => {
+test("obOrdersCancelAll cancels all open orders on a market selected by slug via cancel-all endpoint", async () => {
+  const runtime = createObRuntime();
+  const operations = new MyriadOperations({ runtime });
+  const walletAddress = new Wallet(PRIVATE_KEY_A).address;
+
+  await withFakeTime(async ({ now }) => {
+    const timestamp = String(Math.floor(now() / 1000));
+    const expectedSignature = await signCancelAll(runtime, walletAddress, 42, timestamp);
+
+    await withFetchStub(
+      {
+        "GET /markets/test-market": () =>
+          createJsonResponse({
+            id: 42,
+            slug: "test-market",
+            title: "Will it rain?",
+            state: "open",
+            networkId: 97,
+            executionMode: 1,
+            token: {
+              address: "0x54eC4711c4a429D7b0466dd169079f276a868462",
+              decimals: 18
+            }
+          }),
+        "POST /orders/cancel-all": async (_url, options) => {
+          const body = JSON.parse(String(options.body));
+          assert.equal(body.trader, walletAddress);
+          assert.equal(body.market_id, 42);
+          assert.equal(body.network_id, 97);
+          assert.equal(body.timestamp, timestamp);
+          assert.equal(body.signature, expectedSignature);
+          return createJsonResponse({
+            cancelled_count: 2,
+            market_ids_affected: ["42"]
+          });
+        }
+      },
+      async () => {
+        const result = await operations.obOrdersCancelAll({
+          marketSlug: "test-market"
+        });
+
+        assert.equal(result.wallet, walletAddress);
+        assert.equal(result.marketId, 42);
+        assert.equal(result.marketTitle, "Will it rain?");
+        assert.equal(result.cancelled, 2);
+        assert.deepEqual(result.marketIdsAffected, ["42"]);
+        assert.equal(result.response.cancelled_count, 2);
+      }
+    );
+  });
+});
+
+test("obOrdersCancelAll dry-run returns a signed market-scoped cancel-all payload", async () => {
+  const runtime = createObRuntime();
+  const operations = new MyriadOperations({ runtime });
+  const walletAddress = new Wallet(PRIVATE_KEY_A).address;
+
+  await withFakeTime(async ({ now }) => {
+    const timestamp = String(Math.floor(now() / 1000));
+    const expectedSignature = await signCancelAll(runtime, walletAddress, 42, timestamp);
+
+    await withFetchStub(
+      {
+        "GET /markets/42": (url) => {
+          assert.equal(url.searchParams.get("network_id"), "97");
+          assert.equal(url.searchParams.get("execution_mode"), "1");
+          return createJsonResponse({
+            id: 42,
+            slug: "test-market",
+            title: "Will it rain?",
+            state: "open",
+            networkId: 97,
+            executionMode: 1
+          });
+        }
+      },
+      async () => {
+        const result = await operations.obOrdersCancelAll({
+          marketId: 42,
+          dryRun: true
+        });
+
+        assert.equal(result.wallet, walletAddress);
+        assert.equal(result.marketId, 42);
+        assert.equal(result.marketTitle, "Will it rain?");
+        assert.equal(result.cancelAllRequest.trader, walletAddress);
+        assert.equal(result.cancelAllRequest.market_id, 42);
+        assert.equal(result.cancelAllRequest.network_id, 97);
+        assert.equal(result.cancelAllRequest.timestamp, timestamp);
+        assert.equal(result.cancelAllRequest.signature, expectedSignature);
+      }
+    );
+  });
+});
+
+test("obOrdersCancelAll cancels across all markets with marketId zero in the signed payload", async () => {
+  const runtime = createObRuntime();
+  const operations = new MyriadOperations({ runtime });
+  const walletAddress = new Wallet(PRIVATE_KEY_A).address;
+
+  await withFakeTime(async ({ now }) => {
+    const timestamp = String(Math.floor(now() / 1000));
+    const expectedSignature = await signCancelAll(runtime, walletAddress, 0, timestamp);
+
+    await withFetchStub(
+      {
+        "POST /orders/cancel-all": async (_url, options) => {
+          const body = JSON.parse(String(options.body));
+          assert.equal(body.trader, walletAddress);
+          assert.equal(body.network_id, 97);
+          assert.equal(body.timestamp, timestamp);
+          assert.equal(body.signature, expectedSignature);
+          assert.equal("market_id" in body, false);
+          return createJsonResponse({
+            cancelled_count: 4,
+            market_ids_affected: ["42", "43"]
+          });
+        }
+      },
+      async () => {
+        const result = await operations.obOrdersCancelAll({});
+
+        assert.equal(result.wallet, walletAddress);
+        assert.equal("marketId" in result, false);
+        assert.equal(result.cancelled, 4);
+        assert.deepEqual(result.marketIdsAffected, ["42", "43"]);
+      }
+    );
+  });
+});
+
+test("obOrdersCancelAll dry-run omits market_id for all-markets cancellation", async () => {
+  const runtime = createObRuntime();
+  const operations = new MyriadOperations({ runtime });
+  const walletAddress = new Wallet(PRIVATE_KEY_A).address;
+
+  await withFakeTime(async ({ now }) => {
+    const timestamp = String(Math.floor(now() / 1000));
+    const expectedSignature = await signCancelAll(runtime, walletAddress, 0, timestamp);
+
+    const result = await operations.obOrdersCancelAll({
+      dryRun: true
+    });
+
+    assert.equal(result.wallet, walletAddress);
+    assert.equal("marketId" in result, false);
+    assert.equal(result.cancelAllRequest.trader, walletAddress);
+    assert.equal(result.cancelAllRequest.network_id, 97);
+    assert.equal(result.cancelAllRequest.timestamp, timestamp);
+    assert.equal(result.cancelAllRequest.signature, expectedSignature);
+    assert.equal("market_id" in result.cancelAllRequest, false);
+  });
+});
+
+test("obOrdersCancelBatch dry-run builds a deduplicated cancel-batch payload", async () => {
   const operations = new MyriadOperations({
     runtime: createObRuntime()
   });
   const walletAddress = new Wallet(PRIVATE_KEY_A).address;
-  const cancelledOrderHashes = [];
 
   await withFetchStub(
     {
-      "GET /markets/test-market": () =>
+      "GET /orders/0xaaa": () =>
         createJsonResponse({
-          id: 42,
-          slug: "test-market",
-          title: "Will it rain?",
-          state: "open",
-          networkId: 97,
-          executionMode: 1,
-          token: {
-            address: "0x54eC4711c4a429D7b0466dd169079f276a868462",
-            decimals: 18
-          }
+          orderHash: "0xaaa",
+          order: {
+            trader: walletAddress,
+            marketId: "42",
+            outcomeId: 0,
+            side: 0,
+            amount: utils.parseUnits("1", 18).toString(),
+            price: utils.parseUnits("0.5", 18).toString(),
+            minFillAmount: "0",
+            nonce: "1",
+            expiration: "0"
+          },
+          signature: "0xsignature-a",
+          status: "open",
+          networkId: 97
         }),
-      "GET /orders": (url) => {
-        assert.equal(url.searchParams.get("trader"), walletAddress);
-        assert.equal(url.searchParams.get("network_id"), "97");
-        assert.equal(url.searchParams.get("market_id"), "42");
-        assert.equal(url.searchParams.get("status"), "open");
-        assert.equal(url.searchParams.get("offset"), "0");
-        return createJsonResponse({
-          data: [
-            {
-              orderHash: "0xaaa",
-              order: {
-                trader: walletAddress,
-                marketId: "42",
-                outcomeId: 0,
-                side: 0,
-                amount: utils.parseUnits("1", 18).toString(),
-                price: utils.parseUnits("0.5", 18).toString(),
-                minFillAmount: "0",
-                nonce: "1",
-                expiration: "0"
-              },
-              signature: "0xsignature-a",
-              status: "open",
-              networkId: 97
-            },
-            {
-              orderHash: "0xbbb",
-              order: {
-                trader: walletAddress,
-                marketId: "42",
-                outcomeId: 1,
-                side: 1,
-                amount: utils.parseUnits("2", 18).toString(),
-                price: utils.parseUnits("0.6", 18).toString(),
-                minFillAmount: "0",
-                nonce: "2",
-                expiration: "0"
-              },
-              signature: "0xsignature-b",
-              status: "open",
-              networkId: 97
-            }
-          ]
-        });
-      },
-      "DELETE /orders/0xaaa": async (_url, options) => {
-        const body = JSON.parse(String(options.body));
-        cancelledOrderHashes.push("0xaaa");
-        assert.equal(body.network_id, 97);
-        assert.equal(body.signature, "0xsignature-a");
-        assert.equal(body.order.marketId, "42");
-        return createJsonResponse({ cancelled: true });
-      },
-      "DELETE /orders/0xbbb": async (_url, options) => {
-        const body = JSON.parse(String(options.body));
-        cancelledOrderHashes.push("0xbbb");
-        assert.equal(body.network_id, 97);
-        assert.equal(body.signature, "0xsignature-b");
-        assert.equal(body.order.marketId, "42");
-        return createJsonResponse({ cancelled: true });
-      }
+      "GET /orders/0xbbb": () =>
+        createJsonResponse({
+          orderHash: "0xbbb",
+          order: {
+            trader: walletAddress,
+            marketId: "42",
+            outcomeId: 1,
+            side: 1,
+            amount: utils.parseUnits("2", 18).toString(),
+            price: utils.parseUnits("0.6", 18).toString(),
+            minFillAmount: "0",
+            nonce: "2",
+            expiration: "0"
+          },
+          signature: "0xsignature-b",
+          status: "open",
+          networkId: 97
+        })
     },
     async () => {
-      const result = await operations.obOrdersCancelAll({
-        marketSlug: "test-market"
+      const result = await operations.obOrdersCancelBatch({
+        orderHashes: ["0xaaa", " 0xbbb ", "0xaaa"],
+        dryRun: true
       });
 
       assert.equal(result.wallet, walletAddress);
-      assert.equal(result.marketId, 42);
-      assert.equal(result.totalOpenOrders, 2);
-      assert.equal(result.cancelled, 2);
-      assert.equal(result.failed, 0);
-      assert.deepEqual(cancelledOrderHashes, ["0xaaa", "0xbbb"]);
+      assert.deepEqual(result.orderHashes, ["0xaaa", "0xbbb"]);
+      assert.equal(result.totalOrders, 2);
+      assert.equal(result.cancelBatchRequest.network_id, 97);
+      assert.deepEqual(result.cancelBatchRequest.orders, [
+        {
+          order: {
+            trader: walletAddress,
+            marketId: "42",
+            outcomeId: 0,
+            side: 0,
+            amount: utils.parseUnits("1", 18).toString(),
+            price: utils.parseUnits("0.5", 18).toString(),
+            minFillAmount: "0",
+            nonce: "1",
+            expiration: "0"
+          },
+          signature: "0xsignature-a"
+        },
+        {
+          order: {
+            trader: walletAddress,
+            marketId: "42",
+            outcomeId: 1,
+            side: 1,
+            amount: utils.parseUnits("2", 18).toString(),
+            price: utils.parseUnits("0.6", 18).toString(),
+            minFillAmount: "0",
+            nonce: "2",
+            expiration: "0"
+          },
+          signature: "0xsignature-b"
+        }
+      ]);
+    }
+  );
+});
+
+test("obOrdersCancelBatch submits cancel-batch and summarizes partial failures", async () => {
+  const operations = new MyriadOperations({
+    runtime: createObRuntime()
+  });
+  const walletAddress = new Wallet(PRIVATE_KEY_A).address;
+
+  await withFetchStub(
+    {
+      "GET /orders/0xaaa": () =>
+        createJsonResponse({
+          orderHash: "0xaaa",
+          order: {
+            trader: walletAddress,
+            marketId: "42",
+            outcomeId: 0,
+            side: 0,
+            amount: utils.parseUnits("1", 18).toString(),
+            price: utils.parseUnits("0.5", 18).toString(),
+            minFillAmount: "0",
+            nonce: "1",
+            expiration: "0"
+          },
+          signature: "0xsignature-a",
+          status: "open",
+          networkId: 97
+        }),
+      "GET /orders/0xbbb": () =>
+        createJsonResponse({
+          orderHash: "0xbbb",
+          order: {
+            trader: walletAddress,
+            marketId: "42",
+            outcomeId: 1,
+            side: 1,
+            amount: utils.parseUnits("2", 18).toString(),
+            price: utils.parseUnits("0.6", 18).toString(),
+            minFillAmount: "0",
+            nonce: "2",
+            expiration: "0"
+          },
+          signature: "0xsignature-b",
+          status: "open",
+          networkId: 97
+        }),
+      "POST /orders/cancel-batch": async (_url, options) => {
+        const body = JSON.parse(String(options.body));
+        assert.equal(body.network_id, 97);
+        assert.equal(body.orders.length, 2);
+        assert.equal(body.orders[0].signature, "0xsignature-a");
+        assert.equal(body.orders[1].signature, "0xsignature-b");
+        return createJsonResponse({
+          cancelled: ["0xaaa"],
+          errors: [{ orderHash: "0xbbb", reason: "Order not found" }]
+        });
+      }
+    },
+    async () => {
+      const result = await operations.obOrdersCancelBatch({
+        orderHashes: ["0xaaa", "0xbbb"]
+      });
+
+      assert.equal(result.wallet, walletAddress);
+      assert.deepEqual(result.orderHashes, ["0xaaa", "0xbbb"]);
+      assert.equal(result.cancelled, 1);
+      assert.equal(result.failed, 1);
+      assert.deepEqual(result.cancelledOrderHashes, ["0xaaa"]);
+      assert.deepEqual(result.errors, [{ orderHash: "0xbbb", reason: "Order not found" }]);
+    }
+  );
+});
+
+test("obOrdersCancelBatch fails before submission when the configured wallet does not own an order", async () => {
+  const operations = new MyriadOperations({
+    runtime: createObRuntime()
+  });
+
+  await withFetchStub(
+    {
+      "GET /orders/0xaaa": () =>
+        createJsonResponse({
+          orderHash: "0xaaa",
+          order: {
+            trader: "0x1111111111111111111111111111111111111111",
+            marketId: "42",
+            outcomeId: 0,
+            side: 0,
+            amount: utils.parseUnits("1", 18).toString(),
+            price: utils.parseUnits("0.5", 18).toString(),
+            minFillAmount: "0",
+            nonce: "1",
+            expiration: "0"
+          },
+          signature: "0xsignature-a",
+          status: "open",
+          networkId: 97
+        })
+    },
+    async () => {
+      await assert.rejects(
+        () =>
+          operations.obOrdersCancelBatch({
+            orderHashes: ["0xaaa"]
+          }),
+        /does not own order 0xaaa/
+      );
     }
   );
 });

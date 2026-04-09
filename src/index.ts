@@ -18,6 +18,7 @@ import {
   ObMarketsListInput,
   ObMarketTradesInput,
   ObOrderCancelAllInput,
+  ObOrderCancelBatchInput,
   ObOrdersListInput,
   ObPositionActionInput,
   ObPositionRedeemInput,
@@ -626,19 +627,61 @@ obOrdersCommand
     output(command, result);
   });
 
-obOrdersCommand
-  .command("cancel")
-  .description("Cancel an orderbook order, or use 'all' to cancel all open orders on a market")
-  .argument("<orderHashOrAll>", "Order hash, or 'all' to cancel all open orders on a market")
-  .option("--market-id <id>", "Market id (required with 'all')")
-  .option("--market-slug <slug>", "Market slug (required with 'all')")
+const obOrdersCancelCommand = obOrdersCommand.command("cancel").description("Cancel orderbook orders");
+
+obOrdersCancelCommand
+  .argument("[orderHash]", "Order hash")
   .option("--dry-run", "Build the cancel request without sending it")
-  .action(async (orderHashOrAll: string, options: ObOrderCancelAllInput, command) => {
-    const operations = createOrderbookOperations(command);
-    const result =
-      orderHashOrAll.trim().toLowerCase() === "all"
-        ? await operations.obOrdersCancelAll(options)
-        : await operations.obOrdersCancel({ orderHash: orderHashOrAll, dryRun: options.dryRun });
+  .action(async (orderHash: string | undefined, options: { dryRun?: boolean }, command) => {
+    if (!orderHash) {
+      throw new CommanderError(1, "myriad.invalidArgument", "Provide an order hash or use a cancel subcommand.");
+    }
+
+    const result = await createOrderbookOperations(command).obOrdersCancel({
+      orderHash,
+      dryRun: options.dryRun
+    });
+    output(command, result);
+  });
+
+obOrdersCancelCommand
+  .command("all")
+  .description("Cancel all open orderbook orders, optionally scoped to a market")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .action(async (options: ObOrderCancelAllInput, command) => {
+    const dryRun = (command.parent?.opts() as { dryRun?: boolean } | undefined)?.dryRun;
+    const result = await createOrderbookOperations(command).obOrdersCancelAll({
+      ...options,
+      dryRun
+    });
+    output(command, result);
+  });
+
+obOrdersCancelCommand
+  .command("market")
+  .description("Cancel all open orderbook orders on a specific market")
+  .option("--market-id <id>", "Market id")
+  .option("--market-slug <slug>", "Market slug")
+  .action(async (options: ObOrderCancelAllInput, command) => {
+    const dryRun = (command.parent?.opts() as { dryRun?: boolean } | undefined)?.dryRun;
+    const result = await createOrderbookOperations(command).obOrdersCancelAll({
+      ...options,
+      dryRun
+    });
+    output(command, result);
+  });
+
+obOrdersCancelCommand
+  .command("batch")
+  .description("Cancel multiple selected orderbook orders")
+  .argument("<orderHashes...>", "Order hashes")
+  .action(async (orderHashes: string[], options: { dryRun?: boolean }, command) => {
+    const dryRun = (command.parent?.opts() as { dryRun?: boolean } | undefined)?.dryRun;
+    const result = await createOrderbookOperations(command).obOrdersCancelBatch({
+      orderHashes,
+      dryRun
+    } satisfies ObOrderCancelBatchInput);
     output(command, result);
   });
 

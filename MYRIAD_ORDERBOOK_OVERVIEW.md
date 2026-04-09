@@ -2,11 +2,11 @@ This guide walks through the end-to-end flow for trading on Myriad's Order Book.
 
 For detailed reference, see:
 
-[Order Book API Reference (Provisional)](./MYRIAD_ORDER_BOOK_API_REFERENCE.md)
+[Order Book API Reference](./MYRIAD_ORDER_BOOK_API_REFERENCE.md)
 
 Full REST API documentation (orders, orderbook, trades, positions, events)
 
-[Order Book Frontend Docs (Provisional)](./MYRIAD_ORDERBOOK_FRONTEND_REFERENCE.md)
+[Order Book Frontend Docs](./MYRIAD_ORDERBOOK_FRONTEND_REFERENCE.md)
 
 JavaScript SDK for on-chain interactions (split, merge, redeem, approvals)
 
@@ -34,7 +34,16 @@ Each market has two outcomes. Example: **YES (0)** and **NO (1)**. Outcome share
 
 ### API Authentication
 
-All API requests require an API key:
+**API access is public**, with higher rate limits if an API key is provided. 
+
+Some endpoints require authentication and whitelisting, such as `/markets/quote_with_fee` .
+
+How to authenticate your request:
+
+- Header: `x-api-key: <your_api_key>`
+- Or Query: `?api_key=<your_api_key>`
+
+To obtain an API key, please reach out to the Myriad team.
 
 ```bash
 curl -H "x-api-key: YOUR_API_KEY" <https://api-v2.myriadprotocol.com/markets>

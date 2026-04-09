@@ -41,7 +41,7 @@ myriad mcp
 - `claim_winnings`, `claim_voided`, `claim_all`
 - `ob_markets_list`, `ob_markets_show`, `ob_markets_orderbook`, `ob_markets_trades`
 - `ob_limit_buy`, `ob_limit_sell`, `ob_market_buy`, `ob_market_sell`
-- `ob_orders_list`, `ob_orders_show`, `ob_orders_cancel`, `ob_orders_cancel_all`
+- `ob_orders_list`, `ob_orders_show`, `ob_orders_cancel`, `ob_orders_cancel_all`, `ob_orders_cancel_batch`
 - `ob_positions_list`, `ob_positions_split`, `ob_positions_merge`, `ob_positions_redeem`
 
 ## Safe Tool Orchestration

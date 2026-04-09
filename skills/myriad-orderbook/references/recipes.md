@@ -68,6 +68,18 @@ myriad --chain-id 56 ob orders cancel 0xORDERHASH --dry-run --json
 myriad --chain-id 56 ob orders cancel all --market-id 42 --dry-run --json
 ```
 
+```bash
+myriad --chain-id 56 ob orders cancel market --market-slug will-btc-close-above-120k-on-friday --dry-run --json
+```
+
+```bash
+myriad --chain-id 56 ob orders cancel all --dry-run --json
+```
+
+```bash
+myriad --chain-id 56 ob orders cancel batch 0xORDER1 0xORDER2 --dry-run --json
+```
+
 ## Positions
 
 ```bash

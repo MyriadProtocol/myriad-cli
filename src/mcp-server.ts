@@ -15,6 +15,7 @@ import {
   ObMarketTradesInput,
   ObOrderCancelInput,
   ObOrderCancelAllInput,
+  ObOrderCancelBatchInput,
   ObOrdersListInput,
   ObPositionActionInput,
   ObPositionRedeemInput,
@@ -263,6 +264,14 @@ const OB_ORDERS_CANCEL_ALL_SCHEMA = z
   })
   .strict();
 
+const OB_ORDERS_CANCEL_BATCH_SCHEMA = z
+  .object({
+    orderHashes: z.array(z.string().trim().min(1)).min(1),
+    dryRun: z.boolean().optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
 const OB_POSITIONS_LIST_SCHEMA = z
   .object({
     address: z.string().optional(),
@@ -318,6 +327,7 @@ export const MCP_TOOL_NAMES = [
   "ob_orders_show",
   "ob_orders_cancel",
   "ob_orders_cancel_all",
+  "ob_orders_cancel_batch",
   "ob_positions_list",
   "ob_positions_split",
   "ob_positions_merge",
@@ -348,6 +358,7 @@ export type MyriadOperationsLike = {
   obOrdersShow(input: { orderHash: string }, overrides?: ApiRequestOverrides): Promise<unknown>;
   obOrdersCancel(input: ObOrderCancelInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obOrdersCancelAll(input: ObOrderCancelAllInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obOrdersCancelBatch(input: ObOrderCancelBatchInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obPositionsList(input: ObPositionsListInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obPositionsSplit(input: ObPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obPositionsMerge(input: ObPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown>;
@@ -715,12 +726,25 @@ export function createMyriadMcpServer(operations: MyriadOperationsLike, serverIn
     "ob_orders_cancel_all",
     {
       title: "Orderbook Order Cancel All",
-      description: "Cancel all open orderbook orders for the configured trader on a specific market.",
+      description: "Cancel all open orderbook orders for the configured trader, optionally scoped to a market.",
       inputSchema: OB_ORDERS_CANCEL_ALL_SCHEMA
     },
     async (args) => {
       const { apiBaseUrl, apiKey, ...input } = args;
       return executeTool(() => operations.obOrdersCancelAll(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_orders_cancel_batch",
+    {
+      title: "Orderbook Order Cancel Batch",
+      description: "Cancel multiple selected orderbook orders. Executes immediately unless dryRun is true.",
+      inputSchema: OB_ORDERS_CANCEL_BATCH_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obOrdersCancelBatch(input, extractApiOverrides({ apiBaseUrl, apiKey })));
     }
   );
 

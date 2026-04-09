@@ -20,7 +20,7 @@ myriad mcp
 2. `ob_markets_orderbook` and `ob_markets_trades`.
 3. `wallet_balances` and `ob_positions_list`.
 4. `ob_limit_buy` / `ob_limit_sell` or `ob_market_buy` / `ob_market_sell` with `dryRun=true`.
-5. `ob_orders_list`, `ob_orders_cancel`, `ob_orders_cancel_all`, or `ob_positions_*` as needed.
+5. `ob_orders_list`, `ob_orders_cancel`, `ob_orders_cancel_all`, `ob_orders_cancel_batch`, or `ob_positions_*` as needed.
 
 ## API Override Example (Per Tool Call)
 

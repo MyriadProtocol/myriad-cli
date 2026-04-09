@@ -47,7 +47,9 @@ Before execution:
 4. Manage the lifecycle after submit.
 - Use `myriad ob orders list/show` to inspect status.
 - Use `myriad ob orders cancel` for single orders.
-- Use `myriad ob orders cancel all --market-id|--market-slug` for market-scoped cleanup.
+- Use `myriad ob orders cancel batch <hash...>` for selected-order cleanup.
+- Use `myriad ob orders cancel market --market-id|--market-slug` for explicit market-scoped cleanup.
+- Use `myriad ob orders cancel all` for all-markets cleanup, or keep `myriad ob orders cancel all --market-id|--market-slug` for compatibility-scoped cleanup.
 
 5. Manage positions explicitly.
 - `myriad ob positions list` for portfolio consultation.
@@ -74,7 +76,15 @@ myriad --chain-id 56 ob market sell --market-id 42 --outcome-id 1 --shares 2 --d
 ```
 
 ```bash
-myriad --chain-id 56 ob orders cancel all --market-slug will-btc-close-above-120k --dry-run --json
+myriad --chain-id 56 ob orders cancel batch 0xORDER1 0xORDER2 --dry-run --json
+```
+
+```bash
+myriad --chain-id 56 ob orders cancel market --market-slug will-btc-close-above-120k --dry-run --json
+```
+
+```bash
+myriad --chain-id 56 ob orders cancel all --dry-run --json
 ```
 
 ## Execution Guidance

@@ -51,6 +51,18 @@ function createOperationsStub(overrides = {}) {
     async obMarketTrades() {
       return { ok: true };
     },
+    async obEventsList() {
+      return { ok: true };
+    },
+    async obEventsShow() {
+      return { ok: true };
+    },
+    async obEventOrderbook() {
+      return { ok: true };
+    },
+    async obEventActions() {
+      return { ok: true };
+    },
     async obLimitBuy() {
       return { ok: true };
     },
@@ -85,6 +97,12 @@ function createOperationsStub(overrides = {}) {
       return { ok: true };
     },
     async obPositionsMerge() {
+      return { ok: true };
+    },
+    async obPositionsNegRiskSplit() {
+      return { ok: true };
+    },
+    async obPositionsNegRiskMerge() {
       return { ok: true };
     },
     async obPositionsRedeem() {
@@ -198,6 +216,126 @@ test("ob_positions_list maps tool args and API overrides", async () => {
     marketId: 42,
     page: 2,
     limit: 5
+  });
+  assert.deepEqual(capturedOverrides, {
+    apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
+    apiKey: "override-key"
+  });
+});
+
+test("ob_events_list maps tool args and API overrides", async () => {
+  let capturedInput;
+  let capturedOverrides;
+
+  const operations = createOperationsStub({
+    async obEventsList(input, apiOverrides) {
+      capturedInput = input;
+      capturedOverrides = apiOverrides;
+      return { data: [] };
+    }
+  });
+
+  await withInMemoryClient(operations, async (client) => {
+    const result = await client.callTool({
+      name: "ob_events_list",
+      arguments: {
+        state: "open",
+        networkId: 56,
+        apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
+        apiKey: "override-key"
+      }
+    });
+
+    assert.notEqual(result.isError, true);
+  });
+
+  assert.deepEqual(capturedInput, {
+    state: "open",
+    networkId: 56
+  });
+  assert.deepEqual(capturedOverrides, {
+    apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
+    apiKey: "override-key"
+  });
+});
+
+test("ob_events_actions maps filters and API overrides", async () => {
+  let capturedInput;
+  let capturedOverrides;
+
+  const operations = createOperationsStub({
+    async obEventActions(input, apiOverrides) {
+      capturedInput = input;
+      capturedOverrides = apiOverrides;
+      return { data: [] };
+    }
+  });
+
+  await withInMemoryClient(operations, async (client) => {
+    const result = await client.callTool({
+      name: "ob_events_actions",
+      arguments: {
+        event: "election",
+        tradingModel: "ob",
+        since: 1700000000,
+        onlyRelevant: true,
+        page: 2,
+        limit: 10,
+        apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
+        apiKey: "override-key"
+      }
+    });
+
+    assert.notEqual(result.isError, true);
+  });
+
+  assert.deepEqual(capturedInput, {
+    event: "election",
+    tradingModel: "ob",
+    since: 1700000000,
+    onlyRelevant: true,
+    page: 2,
+    limit: 10
+  });
+  assert.deepEqual(capturedOverrides, {
+    apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
+    apiKey: "override-key"
+  });
+});
+
+test("ob_positions_neg_risk_split maps tool args and API overrides", async () => {
+  let capturedInput;
+  let capturedOverrides;
+
+  const operations = createOperationsStub({
+    async obPositionsNegRiskSplit(input, apiOverrides) {
+      capturedInput = input;
+      capturedOverrides = apiOverrides;
+      return { ok: true };
+    }
+  });
+
+  await withInMemoryClient(operations, async (client) => {
+    const result = await client.callTool({
+      name: "ob_positions_neg_risk_split",
+      arguments: {
+        event: "election",
+        outcomeIndex: 0,
+        amount: "2.5",
+        dryRun: true,
+        apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",
+        apiKey: "override-key"
+      }
+    });
+
+    assert.notEqual(result.isError, true);
+  });
+
+  assert.deepEqual(capturedInput, {
+    event: "election",
+    outcomeIndex: 0,
+    amount: "2.5",
+    dryRun: true
   });
   assert.deepEqual(capturedOverrides, {
     apiBaseUrl: "https://api-v2.staging.myriadprotocol.com",

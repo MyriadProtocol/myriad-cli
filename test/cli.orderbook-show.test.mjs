@@ -78,12 +78,12 @@ globalThis.fetch = async (input, init = {}) => {
 
   if (method === "GET" && url.pathname === "/markets/42") {
     const actualNetworkId = url.searchParams.get("network_id");
-    const actualExecutionMode = url.searchParams.get("execution_mode");
-    if (actualNetworkId !== "56" || actualExecutionMode !== "1") {
+    const actualTradingModel = url.searchParams.get("trading_model");
+    if (actualNetworkId !== "56" || actualTradingModel !== "ob") {
       return new Response(JSON.stringify({
         error: "unexpected query",
         actualNetworkId,
-        actualExecutionMode
+        actualTradingModel
       }), {
         status: 400,
         headers: { "content-type": "application/json" }
@@ -114,7 +114,7 @@ globalThis.fetch = async (input, init = {}) => {
   return modulePath;
 }
 
-test("myriad ob markets show passes execution_mode=1 on market detail requests", async () => {
+test("myriad ob markets show passes trading_model=ob on market detail requests", async () => {
   await withTempDir("myriad-cli-ob-show-", async (cwd) => {
     const mockFetchModule = await writeMockFetchModule(cwd);
     const result = await runCli(

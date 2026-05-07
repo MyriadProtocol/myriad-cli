@@ -98,6 +98,8 @@ Go deeper:
 Your agent discovers Order Book markets, inspects depth, stages limit orders, and manages positions.
 
 ```bash
+myriad ob events list --json
+myriad ob events show 2028-election --json
 myriad ob markets list --json
 myriad ob markets orderbook --market-id 42 --outcome-id 0 --render
 myriad ob limit buy --market-id 42 --outcome-id 0 --price 0.55 --shares 2 --dry-run --json
@@ -150,7 +152,7 @@ MCP client config:
 
 Safe rule for every agent:
 
-1. Use read tools first (`markets_*`, `portfolio`, `wallet_balances`).
+1. Use read tools first (`markets_*`, `ob_events_*`, `portfolio`, `wallet_balances`).
 2. Use `dryRun: true` first for write tools (`trade_*`, `swap_stable`, `claim_*`).
 3. Execute without `dryRun` only after validation.
 
@@ -163,6 +165,10 @@ Core command groups: `markets` -> `trade` -> `ob` -> `claim` -> `wallet` -> `swa
 The `ob` command group targets Myriad's order book deployment on BNB Smart Chain and supports USD1 markets only.
 
 ```bash
+myriad ob events list --json
+myriad ob events show 2028-election --json
+myriad ob events orderbook 2028-election --render
+myriad ob events actions 2028-election --trading-model ob --json
 myriad ob markets list --json
 myriad ob markets orderbook --market-id 42 --outcome-id 0 --json
 myriad ob limit buy --market-id 42 --outcome-id 0 --price 0.55 --shares 5 --json
@@ -173,6 +179,8 @@ myriad ob orders cancel market --market-id 42 --dry-run --json
 myriad ob orders cancel all --dry-run --json
 myriad ob positions list --json
 myriad ob positions split --market-id 42 --amount 10 --dry-run --json
+myriad ob positions neg-risk split --event 2028-election --outcome-index 0 --amount 10 --dry-run --json
+myriad ob positions neg-risk merge --event 2028-election --outcome-index 0 --amount 5 --dry-run --json
 myriad ob positions redeem --market-id 42 --dry-run --json
 ```
 
@@ -247,6 +255,7 @@ This installs Claude Code, OpenClaw, and Codex skills. Use `--force` to overwrit
 - In `markets list --plain`, output columns are: `Title`, `Most likely outcome (with price)`, `Volume`, `Expires At`, `State`, `Market ID`.
 - In `markets show --plain`, output columns are: `Title`, `Outcome (Price)`, `Outcome (Price)`, `Volume`, `Expires At`, `Market ID`.
 - In `markets list --plain`, outcome prices and volumes are USD currency-formatted; `Expires At` is date-only, `HIT` for `>= 2100-01-01`, and `Perpetual` when perpetual is true.
+- In `ob events list --plain`, output columns are: `Title`, `Outcomes`, `Volume`, `Liquidity`, `Expires At`, `State`, `NegRisk`, `Event ID`.
 - In `portfolio --plain`, rows are filtered to unclaimed `open`/`voided`/`won` positions and shown as `Market`, `Outcome`, `Shares`, `Price`, `Current Value`, `Current ROI`, `Status`, `Market ID`, `Outcome ID`.
 - In `wallet deposit --plain`, output is instruction text lines (not an ASCII table).
 - If both `--json` and `--plain` are passed, `--json` takes precedence.

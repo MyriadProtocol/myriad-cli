@@ -592,13 +592,19 @@ Merge YES + NO shares for a NegRisk outcome back into underlying collateral.
 
 ---
 
-## Events (NegRisk)
+## Events
 
-NegRisk events group multiple binary Order Book markets into a single mutually exclusive event (e.g. "Who will win the election?" with outcomes A, B, C, ...). Each outcome is a separate binary market.
+Events group multiple binary Order Book markets under a single parent (e.g. "Who will win the election?" with outcomes A, B, C, ...). Each sibling market is its own binary market with `Yes` / `No` outcomes. The `negRisk` flag determines the resolution semantics:
+
+- **NegRisk events** (`negRisk: true`) — sibling markets are **mutually exclusive**: exactly one resolves to `Yes` and all others resolve to `No` (e.g. "Who will win the election?").
+- **Non-NegRisk events** (`negRisk: false`) — sibling markets resolve **independently**, so zero, one, or multiple siblings can resolve to `Yes` (e.g. "Which teams will make the playoffs?").
+
+> Only **published** events (`publishedAt IS NOT NULL`) are returned by `GET /events`, `GET /events/:id`, and `GET /events/:id/orderbook`. Unpublished events return `404`.
+> 
 
 ### GET /events
 
-List all events with nested outcome markets.
+List all published events with nested sibling markets and aggregated metrics.
 
 **Query parameters:**
 
@@ -609,57 +615,77 @@ List all events with nested outcome markets.
 
 **Response (`200`):**
 
+Each item is an event row with:
+
+- `type: "event"` — discriminator (matches the shape produced by grouped endpoints elsewhere).
+- `negRisk` / `negRiskId` — replaces the previous `ethEventId` field. `negRiskId` is the on-chain NegRisk event id (bytes32 hex).
+- Aggregated trading metrics (`volume`, `volume24h`, `volumeNotional`, `volumeNotional24h`, `liquidity`, `users`, `featured`, `featuredAt`) summed/aggregated across the event's sibling markets.
+- `markets` — array of fully-serialized sibling markets (same shape as `GET /markets` items, including their own `outcomes` and `externalSources`), ordered by `outcomeIndex`.
+- `externalSources` — event-level external sources.
+
 ```json
 {
   "data": [
     {
+      "type": "event",
       "id": "uuid-...",
-      "ethEventId": "0x...",
       "networkId": 56,
+      "slug": "2028-election",
       "title": "Who will win the 2028 election?",
       "description": "...",
-      "slug": "2028-election",
       "imageUrl": "https://...",
+      "bannerImageUrl": "https://...",
       "state": "open",
       "resolvedOutcomeIndex": null,
       "expiresAt": "2028-11-05T00:00:00.000Z",
       "publishedAt": "2025-06-01T00:00:00.000Z",
-      "createdAt": "2025-06-01T00:00:00.000Z",
-      "outcomes": [
+      "negRisk": true,
+      "negRiskId": "0x...",
+      "volume": 123456.78,
+      "volume24h": 1234.56,
+      "volumeNotional": 234567.89,
+      "volumeNotional24h": 2345.67,
+      "liquidity": 9876.54,
+      "users": 1234,
+      "featured": false,
+      "featuredAt": null,
+      "externalSources": [],
+      "markets": [
         {
-          "marketId": "uuid-...",
-          "ethMarketId": 42,
+          "id": 42,
           "title": "Candidate A",
           "outcomeIndex": 0,
-          "state": "open"
-        },
-        {
-          "marketId": "uuid-...",
-          "ethMarketId": 43,
-          "title": "Candidate B",
-          "outcomeIndex": 1,
-          "state": "open"
+          "state": "open",
+          "outcomes": [ /* ... */ ],
+          "externalSources": [ /* ... */ ]
+          /* ...full market shape... */
         }
-      ],
-      "externalSources": []
+      ]
     }
   ]
 }
 ```
 
+> **Breaking changes vs. previous version:** the response no longer contains the
+top-level `ethEventId`, `rules`, `createdAt`, or the minimal `outcomes` array
+(`{ marketId, ethMarketId, title, outcomeIndex, state, tokenId }`). Use
+`negRiskId` instead of `ethEventId`, and read sibling market data — including
+`tokenId` — from `markets[].outcomes[]`.
+> 
+
 ---
 
 ### GET /events/:id
 
-Get a single event by UUID or slug.
+Get a single published event by UUID or slug. Returns `404` if the event is unpublished or not found.
 
-**Response:** Same shape as a single item in `GET /events`, with an additional `slug` field per outcome.
+**Response (`200`):** A single event row with the exact same shape as one item in `GET /events` (the response is the event object directly, not wrapped in `data`).
 
 ---
 
 ### GET /events/:id/orderbook
 
-Combined orderbook across all outcome markets in a NegRisk event. Returns the orderbook per outcome market.
+Combined orderbook across all outcome markets in a published NegRisk event. Returns the orderbook per outcome market.
 
 **Response (`200`):**
 
@@ -689,6 +715,61 @@ Combined orderbook across all outcome markets in a NegRisk event. Returns the or
   ]
 }
 ```
+
+---
+
+### GET /events/:id/actions
+
+Paginated trade actions across all outcome markets in an event, ordered by timestamp descending. Accepts an event UUID or slug.
+
+**Query parameters:**
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `trading_model` | `amm`, `ob`, `all` | Filter outcome markets by trading model (default `amm`) |
+| `since` | unix seconds | Only include actions at or after this timestamp |
+| `until` | unix seconds | Only include actions at or before this timestamp |
+| `only_relevant` | `1`/`true`/`yes` | Exclude wash-trade actions (where `relevant = false`) |
+| `page` | number | Page number (default `1`) |
+| `limit` | number | 1-100 (default `20`) |
+
+**Response (`200`):**
+
+```json
+{
+  "data": [
+    {
+      "user": "0x...",
+      "action": "buy",
+      "marketTitle": "Candidate A",
+      "marketSlug": "candidate-a",
+      "marketId": 42,
+      "networkId": 56,
+      "outcomeTitle": "Yes",
+      "outcomeId": 0,
+      "imageUrl": "https://...",
+      "shares": 1.5,
+      "value": 0.75,
+      "timestamp": 1719835200,
+      "blockNumber": 12345678,
+      "token": "0x<collateral address>",
+      "txId": "0x..."
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 137,
+    "totalPages": 7,
+    "hasNext": true,
+    "hasPrev": false
+  }
+}
+```
+
+The `action` field is normalized: `split` is reported as `buy` and `merge` as `sell`. Maker-side actions are excluded (only `role = 'taker'` or null are returned).
+
+**Errors:** `404` if the event is not found.
 
 ---
 

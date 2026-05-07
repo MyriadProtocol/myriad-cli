@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import {
   renderMarketShowTable,
   renderMarketsListTable,
+  renderObEventActionsTable,
+  renderObEventOrderbookLadder,
+  renderObEventsListTable,
+  renderObEventShowTable,
   renderObOrderShowTable,
   renderObOrdersListTable,
   renderObOrderSubmission,
@@ -389,6 +393,115 @@ test("renderMarketShowTable renders requested columns for plain market detail ou
   assert.match(output, /\|\s*2026-11-30\s*\|/);
   assert.match(output, /\|\s*999\s*\|/);
   assert.doesNotMatch(output, /Push/);
+});
+
+test("renderObEventsListTable renders event summary columns", () => {
+  const output = renderObEventsListTable({
+    data: [
+      {
+        id: "event-1",
+        title: "Election 2028",
+        markets: [{ id: 42 }, { id: 43 }],
+        volume: 1234.56,
+        liquidity: 789.01,
+        expiresAt: "2028-11-05T00:00:00.000Z",
+        state: "open",
+        negRisk: true
+      }
+    ]
+  });
+
+  assert.match(output, /Title\s*\|\s*Outcomes\s*\|\s*Volume\s*\|\s*Liquidity\s*\|\s*Expires At\s*\|\s*State\s*\|\s*NegRisk\s*\|\s*Event ID/);
+  assert.match(output, /Election 2028/);
+  assert.match(output, /\|\s*2\s*\|/);
+  assert.match(output, /\$1,234\.56/);
+  assert.match(output, /\$789\.01/);
+  assert.match(output, /2028-11-05/);
+  assert.match(output, /yes/);
+  assert.match(output, /event-1/);
+});
+
+test("renderObEventShowTable renders summary and sibling markets", () => {
+  const output = renderObEventShowTable({
+    id: "event-1",
+    slug: "election",
+    networkId: 56,
+    title: "Election 2028",
+    state: "open",
+    negRisk: true,
+    negRiskId: "0xabc",
+    volume: 1234.56,
+    liquidity: 789.01,
+    expiresAt: "2028-11-05T00:00:00.000Z",
+    markets: [
+      {
+        id: 42,
+        title: "Candidate A",
+        outcomeIndex: 0,
+        state: "open",
+        outcomes: [
+          { title: "Yes", price: 0.62 },
+          { title: "No", price: 0.38 }
+        ]
+      }
+    ]
+  });
+
+  assert.match(output, /Section: summary/);
+  assert.match(output, /Section: markets/);
+  assert.match(output, /Election 2028/);
+  assert.match(output, /Candidate A/);
+  assert.match(output, /Yes \(\$0\.62\)/);
+  assert.match(output, /\|\s*0\s*\|/);
+  assert.match(output, /\|\s*42\s*\|/);
+});
+
+test("renderObEventActionsTable formats event actions", () => {
+  const output = renderObEventActionsTable({
+    data: [
+      {
+        timestamp: 1700000000,
+        action: "buy",
+        marketTitle: "Candidate A",
+        outcomeTitle: "Yes",
+        shares: 1.5,
+        value: 0.75,
+        user: "0xuser",
+        txId: "0xtx"
+      }
+    ]
+  });
+
+  assert.match(output, /Time\s*\|\s*Action\s*\|\s*Market\s*\|\s*Outcome\s*\|\s*Shares\s*\|\s*Value\s*\|\s*User\s*\|\s*Tx/);
+  assert.match(output, /2023-11-14T22:13:20\.000Z/);
+  assert.match(output, /Candidate A/);
+  assert.match(output, /\|\s*1\.50\s*\|/);
+  assert.match(output, /\|\s*\$0\.75\s*\|/);
+});
+
+test("renderObEventOrderbookLadder labels event outcomes", () => {
+  const output = renderObEventOrderbookLadder(
+    {
+      eventTitle: "Election 2028",
+      outcomes: [
+        {
+          ethMarketId: 42,
+          outcomeIndex: 0,
+          title: "Candidate A",
+          orderbook: {
+            asks: [["620000000000000000", "2000000000000000000"]],
+            bids: [["600000000000000000", "1000000000000000000"]]
+          }
+        }
+      ]
+    },
+    { color: false }
+  );
+
+  assert.match(output, /Event orderbook: Election 2028/);
+  assert.match(output, /Orderbook: Candidate A/);
+  assert.match(output, /Market ID: 42 \| Outcome Index: 0/);
+  assert.match(output, /Mid: 0\.6100/);
 });
 
 test("renderPortfolioTable filters and formats portfolio rows for plain output", () => {

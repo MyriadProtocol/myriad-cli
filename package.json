@@ -1,11 +1,11 @@
 {
   "name": "@myriadmarkets/cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Myriad CLI - Let agents trade prediction markets on Myriad Markets",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "myriad": "./dist/index.js"
+    "myriad": "dist/index.js"
   },
   "publishConfig": {
     "access": "public"

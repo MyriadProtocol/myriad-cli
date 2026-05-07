@@ -40,9 +40,10 @@ myriad mcp
 - `trade_buy`, `trade_sell`
 - `claim_winnings`, `claim_voided`, `claim_all`
 - `ob_markets_list`, `ob_markets_show`, `ob_markets_orderbook`, `ob_markets_trades`
+- `ob_events_list`, `ob_events_show`, `ob_events_orderbook`, `ob_events_actions`
 - `ob_limit_buy`, `ob_limit_sell`, `ob_market_buy`, `ob_market_sell`
 - `ob_orders_list`, `ob_orders_show`, `ob_orders_cancel`, `ob_orders_cancel_all`, `ob_orders_cancel_batch`
-- `ob_positions_list`, `ob_positions_split`, `ob_positions_merge`, `ob_positions_redeem`
+- `ob_positions_list`, `ob_positions_split`, `ob_positions_merge`, `ob_positions_neg_risk_split`, `ob_positions_neg_risk_merge`, `ob_positions_redeem`
 
 ## Safe Tool Orchestration
 
@@ -69,11 +70,11 @@ For AMM workflows:
 
 For order book workflows:
 
-1. `ob_markets_list` or `ob_markets_show`
-2. `ob_markets_orderbook` and `ob_markets_trades`
+1. `ob_events_list`/`ob_events_show` for grouped events, or `ob_markets_list`/`ob_markets_show` for binary markets
+2. `ob_events_orderbook`/`ob_events_actions` for event context, or `ob_markets_orderbook`/`ob_markets_trades` for a sibling market
 3. `wallet_balances` and `ob_positions_list`
 4. `ob_limit_*` or `ob_market_*` with `dryRun=true`
-5. `ob_orders_*` and `ob_positions_*` for post-trade management
+5. `ob_orders_*`, `ob_positions_*`, and `ob_positions_neg_risk_*` for post-trade management
 
 ## API Override Rules
 

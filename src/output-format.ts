@@ -13,6 +13,8 @@ type OrderbookRenderPayload = {
 type OrderbookRenderOptions = {
   levels?: number;
   color?: boolean;
+  marketIdLabel?: string;
+  outcomeLabel?: string;
 };
 
 type NormalizedOrderbookLevel = {
@@ -398,7 +400,9 @@ export function renderOrderbookLadder(payload: unknown, options: OrderbookRender
   const spread = bestAsk !== undefined && bestBid !== undefined ? bestAsk - bestBid : undefined;
   const headerLines = [
     `Orderbook: ${readStringOrFallback(orderbook.marketTitle, "Unknown market")}`,
-    `Market ID: ${orderbook.marketId ?? "N/A"} | Outcome ID: ${orderbook.outcomeId ?? "N/A"}`
+    `${options.marketIdLabel ?? "Market ID"}: ${orderbook.marketId ?? "N/A"} | ${options.outcomeLabel ?? "Outcome ID"}: ${
+      orderbook.outcomeId ?? "N/A"
+    }`
   ];
   const statsLine = [
     `Last: ${lastPrice !== undefined ? formatOrderbookDecimal(lastPrice) : "N/A"}`,
@@ -896,6 +900,166 @@ export function renderMarketShowTable(payload: unknown): string {
   ];
 
   return renderAsciiTable(headers, [row]);
+}
+
+function formatBooleanLabel(value: unknown): string {
+  const parsed = asBoolean(value);
+  if (parsed === undefined) {
+    return "N/A";
+  }
+  return parsed ? "yes" : "no";
+}
+
+function countEventOutcomes(entry: Record<string, unknown>): string {
+  if (Array.isArray(entry.markets)) {
+    return String(entry.markets.length);
+  }
+  if (Array.isArray(entry.outcomes)) {
+    return String(entry.outcomes.length);
+  }
+  return "N/A";
+}
+
+function formatTimestamp(value: unknown): string {
+  const numeric = asNumber(value);
+  if (numeric === undefined) {
+    return "N/A";
+  }
+
+  const date = new Date(numeric * 1000);
+  if (Number.isNaN(date.getTime())) {
+    return "N/A";
+  }
+  return date.toISOString();
+}
+
+export function renderObEventsListTable(payload: unknown): string {
+  const headers = ["Title", "Outcomes", "Volume", "Liquidity", "Expires At", "State", "NegRisk", "Event ID"];
+
+  if (!isObject(payload) || !Array.isArray(payload.data)) {
+    return renderAsciiTable(headers, [["N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]]);
+  }
+
+  const rows = payload.data
+    .filter((entry) => isObject(entry))
+    .map((entry) => [
+      readStringOrFallback(entry.title),
+      countEventOutcomes(entry),
+      formatCurrency(entry.volume),
+      formatCurrency(entry.liquidity),
+      formatExpiresAt(entry),
+      readStringOrFallback(entry.state),
+      formatBooleanLabel(entry.negRisk),
+      formatIdentifier(entry.id)
+    ]);
+
+  if (rows.length === 0) {
+    rows.push(["N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]);
+  }
+
+  return renderAsciiTable(headers, rows);
+}
+
+export function renderObEventShowTable(payload: unknown): string {
+  if (!isObject(payload)) {
+    return renderKeyValueTable([["status", "empty"]]);
+  }
+
+  const summaryEntries: Array<[string, unknown]> = [
+    ["title", readStringOrFallback(payload.title)],
+    ["eventId", formatIdentifier(payload.id)],
+    ["slug", readStringOrFallback(payload.slug)],
+    ["networkId", formatIdentifier(payload.networkId)],
+    ["state", readStringOrFallback(payload.state)],
+    ["negRisk", formatBooleanLabel(payload.negRisk)],
+    ["negRiskId", readStringOrFallback(payload.negRiskId)],
+    ["outcomes", countEventOutcomes(payload)],
+    ["volume", formatCurrency(payload.volume)],
+    ["liquidity", formatCurrency(payload.liquidity)],
+    ["expiresAt", formatExpiresAt(payload)]
+  ];
+
+  const marketHeaders = ["Outcome Index", "Market", "Most likely outcome (with price)", "State", "Market ID"];
+  const marketRows = Array.isArray(payload.markets)
+    ? payload.markets
+        .filter((market) => isObject(market))
+        .map((market) => [
+          formatIdentifier(market.outcomeIndex),
+          readStringOrFallback(market.title),
+          pickMostLikelyOutcome(market.outcomes),
+          readStringOrFallback(market.state),
+          formatIdentifier(market.id ?? market.marketId ?? market.market_id)
+        ])
+    : [];
+
+  if (marketRows.length === 0) {
+    marketRows.push(["N/A", "N/A", "N/A", "N/A", "N/A"]);
+  }
+
+  return [
+    "Section: summary",
+    renderKeyValueTable(summaryEntries),
+    "",
+    "Section: markets",
+    renderAsciiTable(marketHeaders, marketRows)
+  ].join("\n");
+}
+
+export function renderObEventActionsTable(payload: unknown): string {
+  const headers = ["Time", "Action", "Market", "Outcome", "Shares", "Value", "User", "Tx"];
+
+  if (!isObject(payload) || !Array.isArray(payload.data)) {
+    return renderAsciiTable(headers, [["N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]]);
+  }
+
+  const rows = payload.data
+    .filter((entry) => isObject(entry))
+    .map((entry) => [
+      formatTimestamp(entry.timestamp),
+      readStringOrFallback(entry.action),
+      readStringOrFallback(entry.marketTitle),
+      readStringOrFallback(entry.outcomeTitle),
+      formatDecimal(entry.shares),
+      formatCurrency(entry.value),
+      readStringOrFallback(entry.user),
+      readStringOrFallback(entry.txId)
+    ]);
+
+  if (rows.length === 0) {
+    rows.push(["N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]);
+  }
+
+  return renderAsciiTable(headers, rows);
+}
+
+export function renderObEventOrderbookLadder(payload: unknown, options: OrderbookRenderOptions = {}): string {
+  if (!isObject(payload) || !Array.isArray(payload.outcomes)) {
+    return "Event orderbook is empty.";
+  }
+
+  const sections = payload.outcomes
+    .filter((entry) => isObject(entry))
+    .map((entry) =>
+      renderOrderbookLadder(
+        {
+          marketId: entry.ethMarketId ?? entry.marketId,
+          marketTitle: entry.title,
+          outcomeId: entry.outcomeIndex,
+          ...(isObject(entry.orderbook) ? entry.orderbook : {})
+        },
+        {
+          ...options,
+          outcomeLabel: "Outcome Index"
+        }
+      )
+    );
+
+  if (sections.length === 0) {
+    return "Event orderbook is empty.";
+  }
+
+  const header = `Event orderbook: ${readStringOrFallback(payload.eventTitle, "Unknown event")}`;
+  return [header, ...sections].join("\n\n");
 }
 
 const decimalFormatter = new Intl.NumberFormat("en-US", {

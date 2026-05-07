@@ -19,6 +19,7 @@ import {
   ClobTimeInForce,
   Market,
   MarketReference,
+  OrderbookEvent,
   OrderbookLevel,
   PortfolioPosition
 } from "./types.js";
@@ -59,6 +60,25 @@ export type ListMarketsInput = {
 };
 
 export type ObMarketsListInput = ListMarketsInput;
+
+export type ObEventsListInput = {
+  state?: string;
+  networkId?: string | number;
+};
+
+export type ObEventOrderbookInput = {
+  event: string;
+};
+
+export type ObEventActionsInput = {
+  event: string;
+  tradingModel?: string;
+  since?: string | number;
+  until?: string | number;
+  onlyRelevant?: boolean;
+  page?: string | number;
+  limit?: string | number;
+};
 
 export type PortfolioInput = {
   networkId?: string | number;
@@ -216,6 +236,16 @@ export type ObPositionActionInput = MarketReferenceInput & {
   dryRun?: boolean;
 };
 
+export type ObNegRiskPositionActionInput = {
+  event?: string;
+  negRiskId?: string;
+  outcomeIndex: string | number;
+  amount: string | number;
+  allowance?: string;
+  skipApproval?: boolean;
+  dryRun?: boolean;
+};
+
 export type ObPositionRedeemInput = MarketReferenceInput & {
   dryRun?: boolean;
 };
@@ -230,6 +260,7 @@ type ClaimTarget = {
 const ONE_E18 = 1000000000000000000n;
 const DEFAULT_IMMEDIATE_ORDER_WAIT_MS = 20000;
 const ORDER_STATUS_POLL_INTERVAL_MS = 500;
+const BYTES32_HEX_PATTERN = /^0x[0-9a-fA-F]{64}$/;
 const CLOB_ORDER_TYPES: Record<string, Array<{ name: string; type: string }>> = {
   Order: [
     { name: "trader", type: "address" },
@@ -285,6 +316,30 @@ function parseMaybeNumber(input: string | number | undefined, fieldName: string)
   return parseNumberValue(input, fieldName);
 }
 
+function parseNonNegativeIntegerValue(input: string | number, fieldName: string): number {
+  const parsed = parseIntegerValue(input, fieldName);
+  if (parsed < 0) {
+    throw new Error(`${fieldName} must be greater than or equal to zero. Received: ${input}`);
+  }
+  return parsed;
+}
+
+function parseTradingModel(input: string | undefined): "amm" | "ob" | "all" {
+  const normalized = (input ?? "ob").trim().toLowerCase();
+  if (normalized !== "amm" && normalized !== "ob" && normalized !== "all") {
+    throw new Error(`Unsupported trading-model "${input}". Use amm | ob | all.`);
+  }
+  return normalized;
+}
+
+function normalizeNegRiskId(input: string): string {
+  const normalized = input.trim();
+  if (!BYTES32_HEX_PATTERN.test(normalized)) {
+    throw new Error("neg-risk-id must be a bytes32 hex value (0x followed by 64 hex characters).");
+  }
+  return normalized;
+}
+
 function normalizePositiveDecimalInput(input: string | number, fieldName: string): string {
   const normalized = typeof input === "number" ? String(input) : input.trim();
   if (!/^\d+(\.\d+)?$/.test(normalized)) {
@@ -333,6 +388,58 @@ function getMarketCollateralDecimals(market: Market): number {
     return decimals;
   }
   return 18;
+}
+
+function readEventMarketOutcomeIndex(market: Market): number | undefined {
+  const candidate = market.outcomeIndex;
+  if (typeof candidate === "number" && Number.isInteger(candidate)) {
+    return candidate;
+  }
+  if (typeof candidate === "string" && candidate.trim().length > 0) {
+    const parsed = Number(candidate);
+    if (Number.isInteger(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function findEventMarketByOutcomeIndex(event: OrderbookEvent, outcomeIndex: number): Market | undefined {
+  if (!Array.isArray(event.markets)) {
+    return undefined;
+  }
+
+  return event.markets.find((market) => readEventMarketOutcomeIndex(market) === outcomeIndex);
+}
+
+function getEventCollateralDecimals(event: OrderbookEvent | undefined, outcomeIndex: number): number {
+  if (!event) {
+    return 18;
+  }
+
+  const outcomeMarket = findEventMarketByOutcomeIndex(event, outcomeIndex);
+  if (outcomeMarket) {
+    return getMarketCollateralDecimals(outcomeMarket);
+  }
+
+  const firstMarket = Array.isArray(event.markets) ? event.markets[0] : undefined;
+  return firstMarket ? getMarketCollateralDecimals(firstMarket) : 18;
+}
+
+function getEventCollateralTokenAddress(
+  event: OrderbookEvent | undefined,
+  runtime: RuntimeConfig & { collateralTokenAddress: string },
+  outcomeIndex: number
+): string {
+  if (event) {
+    const outcomeMarket = findEventMarketByOutcomeIndex(event, outcomeIndex);
+    const eventTokenAddress = outcomeMarket?.token?.address ?? event.markets?.[0]?.token?.address;
+    if (eventTokenAddress) {
+      return eventTokenAddress;
+    }
+  }
+
+  return runtime.collateralTokenAddress;
 }
 
 function getMarketExecutionMode(market: Market): number | undefined {
@@ -410,6 +517,17 @@ function ensureOrderbookRuntime(runtime: RuntimeConfig) {
       : runtime;
 
   return assertOrderbookConfig(orderbookRuntime);
+}
+
+function ensureNegRiskRuntime(runtime: RuntimeConfig) {
+  const orderbookRuntime = ensureOrderbookRuntime(runtime);
+  if (!orderbookRuntime.obNegRiskAdapter) {
+    throw new Error(
+      `NegRisk deployment config is incomplete for chain ${runtime.chainId}. Set MYRIAD_OB_NEG_RISK_ADAPTER.`
+    );
+  }
+
+  return orderbookRuntime as ReturnType<typeof ensureOrderbookRuntime> & { obNegRiskAdapter: string };
 }
 
 function formatRawUnits(raw: bigint, decimals: number): string {
@@ -778,11 +896,85 @@ async function resolveOrderbookMarket(
   runtime: RuntimeConfig
 ): Promise<Market> {
   const market = await resolveMarket(apiClient, marketReference, {
-    execution_mode: 1
+    trading_model: "ob"
   });
   ensureNetworkMatch(market, runtime);
   ensureOrderbookMarket(market);
   return market;
+}
+
+function ensureEventNetworkMatch(event: OrderbookEvent, runtime: RuntimeConfig): void {
+  if (event.networkId !== runtime.chainId) {
+    throw new Error(
+      `Event network mismatch: event uses network ${event.networkId}, runtime is configured for ${runtime.chainId}. ` +
+        "Use --chain-id and matching deployment addresses."
+    );
+  }
+}
+
+function isNegRiskEvent(event: OrderbookEvent): boolean {
+  return event.negRisk === true;
+}
+
+function readEventNegRiskId(event: OrderbookEvent): string | undefined {
+  return typeof event.negRiskId === "string" && event.negRiskId.length > 0 ? event.negRiskId : undefined;
+}
+
+async function resolveOrderbookEvent(
+  apiClient: MyriadApiClient,
+  eventReference: string,
+  runtime: RuntimeConfig
+): Promise<OrderbookEvent> {
+  const event = await apiClient.getEvent(eventReference);
+  ensureEventNetworkMatch(event, runtime);
+  return event;
+}
+
+async function resolveNegRiskPositionTarget(params: {
+  apiClient: MyriadApiClient;
+  input: ObNegRiskPositionActionInput;
+  runtime: RuntimeConfig & { collateralTokenAddress: string };
+}): Promise<{
+  event?: OrderbookEvent;
+  negRiskId: string;
+  outcomeIndex: number;
+  collateralDecimals: number;
+  collateralTokenAddress: string;
+}> {
+  const { apiClient, input, runtime } = params;
+  const hasEvent = typeof input.event === "string" && input.event.trim().length > 0;
+  const hasNegRiskId = typeof input.negRiskId === "string" && input.negRiskId.trim().length > 0;
+  if ((hasEvent && hasNegRiskId) || (!hasEvent && !hasNegRiskId)) {
+    throw new Error("Provide exactly one of --event or --neg-risk-id.");
+  }
+
+  const outcomeIndex = parseNonNegativeIntegerValue(input.outcomeIndex, "outcome-index");
+  if (hasNegRiskId) {
+    return {
+      negRiskId: normalizeNegRiskId(input.negRiskId as string),
+      outcomeIndex,
+      collateralDecimals: 18,
+      collateralTokenAddress: runtime.collateralTokenAddress
+    };
+  }
+
+  const event = await resolveOrderbookEvent(apiClient, input.event as string, runtime);
+  if (!isNegRiskEvent(event)) {
+    throw new Error(`Event ${event.slug ?? event.id} is not a NegRisk event and cannot use NegRisk position endpoints.`);
+  }
+
+  const negRiskId = readEventNegRiskId(event);
+  if (!negRiskId) {
+    throw new Error(`Event ${event.slug ?? event.id} does not include negRiskId.`);
+  }
+
+  return {
+    event,
+    negRiskId: normalizeNegRiskId(negRiskId),
+    outcomeIndex,
+    collateralDecimals: getEventCollateralDecimals(event, outcomeIndex),
+    collateralTokenAddress: getEventCollateralTokenAddress(event, runtime, outcomeIndex)
+  };
 }
 
 function ensureNetworkMatch(market: Market, runtime: RuntimeConfig): void {
@@ -1295,7 +1487,7 @@ export class MyriadOperations {
     return apiClient.listMarkets({
       state: input.state ?? "open",
       network_id: parseMaybeInteger(input.networkId, "network-id") ?? runtime.chainId,
-      execution_mode: 1,
+      trading_model: "ob",
       keyword: input.keyword,
       sort: input.sort ?? "volume_24h",
       order: input.order ?? "desc",
@@ -1318,18 +1510,18 @@ export class MyriadOperations {
         marketArgument,
         parseMaybeInteger(input.networkId, "network-id") ?? runtime.chainId,
         {
-          execution_mode: 1
+          trading_model: "ob"
         }
       );
     } else {
       const asNumber = Number.parseInt(marketArgument, 10);
       if (!Number.isNaN(asNumber)) {
         market = await apiClient.getMarketById(asNumber, parseMaybeInteger(input.networkId, "network-id") ?? runtime.chainId, {
-          execution_mode: 1
+          trading_model: "ob"
         });
       } else {
         market = await apiClient.getMarketBySlug(marketArgument, {
-          execution_mode: 1
+          trading_model: "ob"
         });
       }
     }
@@ -1337,6 +1529,67 @@ export class MyriadOperations {
     ensureNetworkMatch(market, runtime);
     ensureOrderbookMarket(market);
     return market;
+  }
+
+  async obEventsList(input: ObEventsListInput = {}, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+
+    return apiClient.listEvents({
+      network_id: parseMaybeInteger(input.networkId, "network-id") ?? runtime.chainId,
+      state: input.state ?? "open"
+    });
+  }
+
+  async obEventsShow(eventReference: string, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+    return resolveOrderbookEvent(apiClient, eventReference, runtime);
+  }
+
+  async obEventOrderbook(input: ObEventOrderbookInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+    const event = await resolveOrderbookEvent(apiClient, input.event, runtime);
+    if (!isNegRiskEvent(event)) {
+      throw new Error(
+        `Event ${event.slug ?? event.id} is not a NegRisk event. ` +
+          "Use `myriad ob events show` to inspect sibling markets, then `myriad ob markets orderbook` for a sibling market."
+      );
+    }
+
+    const orderbook = await apiClient.getEventOrderbook(event.id);
+    return {
+      eventId: event.id,
+      eventSlug: event.slug,
+      eventTitle: event.title,
+      negRiskId: event.negRiskId,
+      ...orderbook
+    };
+  }
+
+  async obEventActions(input: ObEventActionsInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = this.runtimeForApi(overrides);
+    const apiClient = this.createApiClient(overrides);
+    const event = await resolveOrderbookEvent(apiClient, input.event, runtime);
+    const tradingModel = parseTradingModel(input.tradingModel);
+
+    const response = await apiClient.getEventActions(event.id, {
+      trading_model: tradingModel,
+      since: parseMaybeInteger(input.since, "since"),
+      until: parseMaybeInteger(input.until, "until"),
+      only_relevant: input.onlyRelevant === true ? true : undefined,
+      page: parseMaybeInteger(input.page, "page") ?? 1,
+      limit: parseMaybeInteger(input.limit, "limit") ?? 20
+    });
+
+    return {
+      eventId: event.id,
+      eventSlug: event.slug,
+      eventTitle: event.title,
+      tradingModel,
+      ...response
+    };
   }
 
   async obMarketOrderbook(input: ObMarketBookInput, overrides?: ApiRequestOverrides): Promise<unknown> {
@@ -1390,7 +1643,7 @@ export class MyriadOperations {
     const address = await this.resolveWalletAddress(runtime, input.address);
 
     const response = await apiClient.getPortfolio(address, {
-      execution_mode: 1,
+      trading_model: "ob",
       network_id: runtime.chainId,
       market_id: parseMaybeInteger(input.marketId, "market-id"),
       market_slug: input.marketSlug,
@@ -2007,6 +2260,117 @@ export class MyriadOperations {
       wallet: walletAddress,
       marketId: market.id,
       marketTitle: market.title,
+      amountRaw,
+      call,
+      execution
+    };
+  }
+
+  async obPositionsNegRiskSplit(input: ObNegRiskPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = ensureNegRiskRuntime(this.runtimeForApi(overrides));
+    const apiClient = this.createApiClient(overrides);
+    const target = await resolveNegRiskPositionTarget({ apiClient, input, runtime });
+    const amountRaw = parseTokenUnits(input.amount, target.collateralDecimals, "amount");
+    const privateKey = await this.resolveSignerPrivateKey(runtime);
+    const walletAddress = new Wallet(privateKey).address;
+    const approvalPreview = {
+      type: "erc20_allowance",
+      tokenAddress: target.collateralTokenAddress,
+      spenderAddress: runtime.obNegRiskAdapter,
+      requiredAmountRaw: amountRaw,
+      requiredAmount: formatRawUnits(BigInt(amountRaw), target.collateralDecimals),
+      allowancePreference: this.resolveEffectiveAllowancePreference(input.allowance)
+    };
+
+    const call = await apiClient.splitNegRiskPosition({
+      event_id: target.negRiskId,
+      outcome_index: target.outcomeIndex,
+      amount: amountRaw,
+      network_id: runtime.chainId
+    });
+
+    if (input.dryRun) {
+      return {
+        wallet: walletAddress,
+        eventId: target.event?.id,
+        eventSlug: target.event?.slug,
+        eventTitle: target.event?.title,
+        negRiskId: target.negRiskId,
+        outcomeIndex: target.outcomeIndex,
+        amountRaw,
+        approval: approvalPreview,
+        call
+      };
+    }
+
+    const executionService = new EvmExecutionService({
+      rpcUrl: runtime.rpcUrl,
+      privateKey,
+      chainId: runtime.chainId
+    });
+
+    const approval =
+      input.skipApproval === true
+        ? { approved: true, skipped: true }
+        : await executionService.ensureErc20Allowance({
+            tokenAddress: approvalPreview.tokenAddress,
+            spenderAddress: approvalPreview.spenderAddress,
+            requiredAmount: approvalPreview.requiredAmount,
+            allowancePreference: approvalPreview.allowancePreference
+          });
+
+    const execution = await this.executePositionCalldata(runtime, privateKey, call);
+
+    return {
+      wallet: walletAddress,
+      eventId: target.event?.id,
+      eventSlug: target.event?.slug,
+      eventTitle: target.event?.title,
+      negRiskId: target.negRiskId,
+      outcomeIndex: target.outcomeIndex,
+      amountRaw,
+      approval,
+      call,
+      execution
+    };
+  }
+
+  async obPositionsNegRiskMerge(input: ObNegRiskPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown> {
+    const runtime = ensureNegRiskRuntime(this.runtimeForApi(overrides));
+    const apiClient = this.createApiClient(overrides);
+    const target = await resolveNegRiskPositionTarget({ apiClient, input, runtime });
+    const amountRaw = parseTokenUnits(input.amount, target.collateralDecimals, "amount");
+    const privateKey = await this.resolveSignerPrivateKey(runtime);
+    const walletAddress = new Wallet(privateKey).address;
+    const call = await apiClient.mergeNegRiskPosition({
+      event_id: target.negRiskId,
+      outcome_index: target.outcomeIndex,
+      amount: amountRaw,
+      network_id: runtime.chainId
+    });
+
+    if (input.dryRun) {
+      return {
+        wallet: walletAddress,
+        eventId: target.event?.id,
+        eventSlug: target.event?.slug,
+        eventTitle: target.event?.title,
+        negRiskId: target.negRiskId,
+        outcomeIndex: target.outcomeIndex,
+        amountRaw,
+        call
+      };
+    }
+
+    const execution = await this.executePositionCalldata(runtime, privateKey, call);
+
+    return {
+      wallet: walletAddress,
+      eventId: target.event?.id,
+      eventSlug: target.event?.slug,
+      eventTitle: target.event?.title,
+      negRiskId: target.negRiskId,
+      outcomeIndex: target.outcomeIndex,
       amountRaw,
       call,
       execution

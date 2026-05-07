@@ -8,11 +8,15 @@ import {
   ClaimVoidedInput,
   ListMarketsInput,
   MyriadOperations,
+  ObEventActionsInput,
+  ObEventOrderbookInput,
+  ObEventsListInput,
   ObLimitOrderInput,
   ObMarketBookInput,
   ObMarketOrderInput,
   ObMarketsListInput,
   ObMarketTradesInput,
+  ObNegRiskPositionActionInput,
   ObOrderCancelInput,
   ObOrderCancelAllInput,
   ObOrderCancelBatchInput,
@@ -198,6 +202,41 @@ const OB_MARKETS_TRADES_SCHEMA = z
   })
   .strict();
 
+const OB_EVENTS_LIST_SCHEMA = z
+  .object({
+    state: z.string().optional(),
+    networkId: INTEGER_LIKE_SCHEMA.optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_EVENTS_SHOW_SCHEMA = z
+  .object({
+    event: z.string().trim().min(1),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_EVENTS_ORDERBOOK_SCHEMA = z
+  .object({
+    event: z.string().trim().min(1),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
+const OB_EVENTS_ACTIONS_SCHEMA = z
+  .object({
+    event: z.string().trim().min(1),
+    tradingModel: z.string().optional(),
+    since: INTEGER_LIKE_SCHEMA.optional(),
+    until: INTEGER_LIKE_SCHEMA.optional(),
+    onlyRelevant: z.boolean().optional(),
+    page: INTEGER_LIKE_SCHEMA.optional(),
+    limit: INTEGER_LIKE_SCHEMA.optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
 const OB_LIMIT_ORDER_SCHEMA = z
   .object({
     ...MARKET_REFERENCE_SHAPE,
@@ -295,6 +334,19 @@ const OB_POSITION_ACTION_SCHEMA = z
   })
   .strict();
 
+const OB_NEG_RISK_POSITION_ACTION_SCHEMA = z
+  .object({
+    event: z.string().trim().min(1).optional(),
+    negRiskId: z.string().trim().min(1).optional(),
+    outcomeIndex: INTEGER_LIKE_SCHEMA,
+    amount: NUMBER_LIKE_SCHEMA,
+    allowance: z.string().optional(),
+    skipApproval: z.boolean().optional(),
+    dryRun: z.boolean().optional(),
+    ...API_OVERRIDE_SHAPE
+  })
+  .strict();
+
 const OB_POSITION_REDEEM_SCHEMA = z
   .object({
     ...MARKET_REFERENCE_SHAPE,
@@ -319,6 +371,10 @@ export const MCP_TOOL_NAMES = [
   "ob_markets_show",
   "ob_markets_orderbook",
   "ob_markets_trades",
+  "ob_events_list",
+  "ob_events_show",
+  "ob_events_orderbook",
+  "ob_events_actions",
   "ob_limit_buy",
   "ob_limit_sell",
   "ob_market_buy",
@@ -331,6 +387,8 @@ export const MCP_TOOL_NAMES = [
   "ob_positions_list",
   "ob_positions_split",
   "ob_positions_merge",
+  "ob_positions_neg_risk_split",
+  "ob_positions_neg_risk_merge",
   "ob_positions_redeem"
 ] as const;
 
@@ -350,6 +408,10 @@ export type MyriadOperationsLike = {
   obMarketsShow(marketArgument: string | number, input?: { networkId?: string | number }, overrides?: ApiRequestOverrides): Promise<unknown>;
   obMarketOrderbook(input: ObMarketBookInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obMarketTrades(input: ObMarketTradesInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obEventsList(input: ObEventsListInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obEventsShow(eventReference: string, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obEventOrderbook(input: ObEventOrderbookInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obEventActions(input: ObEventActionsInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obLimitBuy(input: ObLimitOrderInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obLimitSell(input: ObLimitOrderInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obMarketBuy(input: ObMarketOrderInput, overrides?: ApiRequestOverrides): Promise<unknown>;
@@ -362,6 +424,8 @@ export type MyriadOperationsLike = {
   obPositionsList(input: ObPositionsListInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obPositionsSplit(input: ObPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obPositionsMerge(input: ObPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obPositionsNegRiskSplit(input: ObNegRiskPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown>;
+  obPositionsNegRiskMerge(input: ObNegRiskPositionActionInput, overrides?: ApiRequestOverrides): Promise<unknown>;
   obPositionsRedeem(input: ObPositionRedeemInput, overrides?: ApiRequestOverrides): Promise<unknown>;
 };
 
@@ -632,6 +696,58 @@ export function createMyriadMcpServer(operations: MyriadOperationsLike, serverIn
   );
 
   server.registerTool(
+    "ob_events_list",
+    {
+      title: "Orderbook Events List",
+      description: "List published Order Book events with sibling markets.",
+      inputSchema: OB_EVENTS_LIST_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obEventsList(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_events_show",
+    {
+      title: "Orderbook Event Show",
+      description: "Get an Order Book event by UUID or slug.",
+      inputSchema: OB_EVENTS_SHOW_SCHEMA
+    },
+    async (args) => {
+      const { event, apiBaseUrl, apiKey } = args;
+      return executeTool(() => operations.obEventsShow(event, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_events_orderbook",
+    {
+      title: "Orderbook Event Depth",
+      description: "Get combined orderbooks for a NegRisk Order Book event.",
+      inputSchema: OB_EVENTS_ORDERBOOK_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obEventOrderbook(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_events_actions",
+    {
+      title: "Orderbook Event Actions",
+      description: "Get recent trade actions across all outcome markets in an event.",
+      inputSchema: OB_EVENTS_ACTIONS_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obEventActions(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
     "ob_limit_buy",
     {
       title: "Orderbook Limit Buy",
@@ -784,6 +900,32 @@ export function createMyriadMcpServer(operations: MyriadOperationsLike, serverIn
     async (args) => {
       const { apiBaseUrl, apiKey, ...input } = args;
       return executeTool(() => operations.obPositionsMerge(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_positions_neg_risk_split",
+    {
+      title: "Orderbook NegRisk Split",
+      description: "Split collateral into YES + NO shares for a NegRisk event outcome. Executes immediately unless dryRun is true.",
+      inputSchema: OB_NEG_RISK_POSITION_ACTION_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obPositionsNegRiskSplit(input, extractApiOverrides({ apiBaseUrl, apiKey })));
+    }
+  );
+
+  server.registerTool(
+    "ob_positions_neg_risk_merge",
+    {
+      title: "Orderbook NegRisk Merge",
+      description: "Merge YES + NO shares for a NegRisk event outcome. Executes immediately unless dryRun is true.",
+      inputSchema: OB_NEG_RISK_POSITION_ACTION_SCHEMA
+    },
+    async (args) => {
+      const { apiBaseUrl, apiKey, ...input } = args;
+      return executeTool(() => operations.obPositionsNegRiskMerge(input, extractApiOverrides({ apiBaseUrl, apiKey })));
     }
   );
 

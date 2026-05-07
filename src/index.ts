@@ -12,11 +12,15 @@ import {
   ClaimVoidedInput,
   ListMarketsInput,
   MyriadOperations,
+  ObEventActionsInput,
+  ObEventOrderbookInput,
+  ObEventsListInput,
   ObLimitOrderInput,
   ObMarketBookInput,
   ObMarketOrderInput,
   ObMarketsListInput,
   ObMarketTradesInput,
+  ObNegRiskPositionActionInput,
   ObOrderCancelAllInput,
   ObOrderCancelBatchInput,
   ObOrdersListInput,
@@ -35,6 +39,10 @@ import { startMyriadMcpServer } from "./mcp-server.js";
 import {
   renderMarketShowTable,
   renderMarketsListTable,
+  renderObEventActionsTable,
+  renderObEventOrderbookLadder,
+  renderObEventsListTable,
+  renderObEventShowTable,
   renderObOrderShowTable,
   renderObOrdersListTable,
   renderObOrderSubmission,
@@ -77,6 +85,11 @@ type MarketsShowOptions = {
 };
 
 type ObMarketBookCommandOptions = ObMarketBookInput & {
+  render?: boolean;
+  levels?: string | number;
+};
+
+type ObEventOrderbookCommandOptions = ObEventOrderbookInput & {
   render?: boolean;
   levels?: string | number;
 };
@@ -495,6 +508,80 @@ obMarketsCommand
     output(command, result);
   });
 
+const obEventsCommand = obCommand.command("events").description("Discover orderbook events and event data");
+
+obEventsCommand
+  .command("list")
+  .description("List published orderbook events")
+  .option("--state <state>", "Event state", "open")
+  .action(async (options: ObEventsListInput, command) => {
+    const result = await createOrderbookOperations(command).obEventsList(options);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderObEventsListTable(result));
+      return;
+    }
+    output(command, result);
+  });
+
+obEventsCommand
+  .command("show")
+  .description("Show an orderbook event by UUID or slug")
+  .argument("<event>", "Event UUID or slug")
+  .action(async (eventReference: string, _options, command) => {
+    const result = await createOrderbookOperations(command).obEventsShow(eventReference);
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderObEventShowTable(result));
+      return;
+    }
+    output(command, result);
+  });
+
+obEventsCommand
+  .command("orderbook")
+  .description("Show a combined orderbook for a NegRisk event")
+  .argument("<event>", "Event UUID or slug")
+  .option("--render", "Render terminal orderbook ladders")
+  .option("--levels <n>", "Visible levels per side when rendering", "10")
+  .action(async (eventReference: string, options: Omit<ObEventOrderbookCommandOptions, "event">, command) => {
+    const result = await createOrderbookOperations(command).obEventOrderbook({
+      event: eventReference
+    });
+    if (options.render === true) {
+      const visibleLevels = parseInteger(String(options.levels ?? "10"), "levels");
+      if (visibleLevels <= 0) {
+        throw new Error("levels must be a positive integer.");
+      }
+      console.log(renderObEventOrderbookLadder(result, { levels: visibleLevels }));
+      return;
+    }
+    output(command, result);
+  });
+
+obEventsCommand
+  .command("actions")
+  .description("Show recent trade actions for an event")
+  .argument("<event>", "Event UUID or slug")
+  .option("--trading-model <model>", "Trading model: amm | ob | all", "ob")
+  .option("--since <unix>", "Only include actions at or after this unix timestamp")
+  .option("--until <unix>", "Only include actions at or before this unix timestamp")
+  .option("--only-relevant", "Exclude wash-trade actions")
+  .option("--page <page>", "Page number", "1")
+  .option("--limit <limit>", "Items per page", "20")
+  .action(async (eventReference: string, options: Omit<ObEventActionsInput, "event">, command) => {
+    const result = await createOrderbookOperations(command).obEventActions({
+      ...options,
+      event: eventReference
+    });
+    const globalOptions = command.optsWithGlobals() as GlobalOptions;
+    if (resolveEffectiveOutputMode(globalOptions) === "plain") {
+      console.log(renderObEventActionsTable(result));
+      return;
+    }
+    output(command, result);
+  });
+
 const obLimitCommand = obCommand.command("limit").description("Place orderbook limit orders");
 
 obLimitCommand
@@ -706,6 +793,36 @@ obPositionsCommand
     output(command, result);
   });
 
+const obPositionsNegRiskCommand = obPositionsCommand.command("neg-risk").description("Manage NegRisk event positions");
+
+obPositionsNegRiskCommand
+  .command("split")
+  .description("Split collateral into YES + NO shares for a NegRisk event outcome")
+  .option("--event <event>", "Event UUID or slug")
+  .option("--neg-risk-id <id>", "On-chain NegRisk event id (bytes32)")
+  .requiredOption("--outcome-index <n>", "Outcome index within the event")
+  .requiredOption("--amount <amount>", "Collateral amount to split")
+  .option("--allowance <amount|UNLIMITED>", "Allowance override for collateral approval")
+  .option("--skip-approval", "Skip allowance checks")
+  .option("--dry-run", "Build calldata without sending it")
+  .action(async (options: ObNegRiskPositionActionInput, command) => {
+    const result = await createOrderbookOperations(command).obPositionsNegRiskSplit(options);
+    output(command, result);
+  });
+
+obPositionsNegRiskCommand
+  .command("merge")
+  .description("Merge YES + NO shares for a NegRisk event outcome")
+  .option("--event <event>", "Event UUID or slug")
+  .option("--neg-risk-id <id>", "On-chain NegRisk event id (bytes32)")
+  .requiredOption("--outcome-index <n>", "Outcome index within the event")
+  .requiredOption("--amount <amount>", "Amount to merge")
+  .option("--dry-run", "Build calldata without sending it")
+  .action(async (options: ObNegRiskPositionActionInput, command) => {
+    const result = await createOrderbookOperations(command).obPositionsNegRiskMerge(options);
+    output(command, result);
+  });
+
 obPositionsCommand
   .command("split")
   .description("Split collateral into YES + NO shares")
@@ -811,6 +928,8 @@ for (const commandGroup of [
   obMarketCommand,
   obOrdersCommand,
   obPositionsCommand,
+  obPositionsNegRiskCommand,
+  obEventsCommand,
   claimCommand,
   skillsCommand
 ]) {

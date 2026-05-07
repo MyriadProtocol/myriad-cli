@@ -5,6 +5,14 @@ Use launch-oriented, runtime-aware commands. If local defaults are not yet align
 ## Discovery
 
 ```bash
+myriad --chain-id 56 ob events list --state open --json
+```
+
+```bash
+myriad --chain-id 56 ob events show 2028-election --json
+```
+
+```bash
 myriad --chain-id 56 ob markets list --state open --sort volume --order desc --limit 10 --json
 ```
 
@@ -17,6 +25,14 @@ myriad --chain-id 56 ob markets show will-btc-close-above-120k-on-friday --json
 ```
 
 ## Orderbook and Trades
+
+```bash
+myriad --chain-id 56 ob events orderbook 2028-election --render
+```
+
+```bash
+myriad --chain-id 56 ob events actions 2028-election --trading-model ob --limit 20 --json
+```
 
 ```bash
 myriad --chain-id 56 ob markets orderbook --market-id 42 --outcome-id 0 --json
@@ -95,6 +111,14 @@ myriad --chain-id 56 ob positions merge --market-slug will-btc-close-above-120k-
 ```
 
 ```bash
+myriad --chain-id 56 ob positions neg-risk split --event 2028-election --outcome-index 0 --amount 10 --dry-run --json
+```
+
+```bash
+myriad --chain-id 56 ob positions neg-risk merge --event 2028-election --outcome-index 0 --amount 5 --dry-run --json
+```
+
+```bash
 myriad --chain-id 56 ob positions redeem --market-id 42 --dry-run --json
 ```
 
@@ -108,3 +132,5 @@ myriad --chain-id 56 ob positions redeem --market-id 42 --dry-run --json
   Check `myriad wallet balances --json` and approval requirements before retrying.
 - Runtime mismatch:
   Re-check chain, API base URL, and deployed order book addresses.
+- NegRisk selector mismatch:
+  Keep exactly one of `--event` or `--neg-risk-id`.

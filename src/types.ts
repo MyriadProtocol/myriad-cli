@@ -41,6 +41,34 @@ export type Market = {
   [key: string]: unknown;
 };
 
+export type OrderbookEvent = {
+  type?: "event" | string;
+  id: string;
+  networkId: number;
+  slug?: string;
+  title: string;
+  description?: string;
+  imageUrl?: string;
+  bannerImageUrl?: string;
+  state: "open" | "closed" | "resolved" | string;
+  resolvedOutcomeIndex?: number | null;
+  expiresAt?: string;
+  publishedAt?: string;
+  negRisk?: boolean;
+  negRiskId?: string | null;
+  volume?: number;
+  volume24h?: number;
+  volumeNotional?: number;
+  volumeNotional24h?: number;
+  liquidity?: number;
+  users?: number;
+  featured?: boolean;
+  featuredAt?: string | null;
+  externalSources?: unknown[];
+  markets?: Market[];
+  [key: string]: unknown;
+};
+
 export type QuoteAction = "buy" | "sell";
 
 export type MarketReferenceById = {
@@ -135,6 +163,20 @@ export type OrderbookResponse = {
   asks: OrderbookLevel[];
 };
 
+export type OrderbookEventOrderbookOutcome = {
+  marketId: string;
+  ethMarketId: number;
+  outcomeIndex: number;
+  title: string;
+  orderbook: OrderbookResponse;
+  [key: string]: unknown;
+};
+
+export type OrderbookEventOrderbookResponse = {
+  outcomes: OrderbookEventOrderbookOutcome[];
+  [key: string]: unknown;
+};
+
 export type OrderbookTrade = {
   price: string;
   priceAfterFees?: string;
@@ -148,6 +190,25 @@ export type OrderbookTrade = {
 };
 
 export type OrderbookTradesResponse = ApiListResponse<OrderbookTrade> | OrderbookTrade[];
+
+export type OrderbookEventAction = {
+  user?: string;
+  action: string;
+  marketTitle?: string;
+  marketSlug?: string;
+  marketId?: number;
+  networkId?: number;
+  outcomeTitle?: string;
+  outcomeId?: number;
+  imageUrl?: string;
+  shares?: number;
+  value?: number;
+  timestamp?: number;
+  blockNumber?: number;
+  token?: string;
+  txId?: string;
+  [key: string]: unknown;
+};
 
 export type ClobOrderSide = 0 | 1;
 
@@ -185,4 +246,11 @@ export type PositionCalldataResponse = {
   calldata: string;
   value?: string;
   [key: string]: unknown;
+};
+
+export type NegRiskPositionRequest = {
+  event_id: string;
+  outcome_index: number;
+  amount: string;
+  network_id?: number;
 };

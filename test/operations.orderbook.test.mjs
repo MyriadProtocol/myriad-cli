@@ -165,7 +165,7 @@ test("obLimitBuy dry-run signs a normalized order payload", async () => {
   );
 });
 
-test("obMarketsShow requests execution_mode=1 for orderbook market details", async () => {
+test("obMarketsShow requests trading_model=ob for orderbook market details", async () => {
   const operations = new MyriadOperations({
     runtime: createObRuntime()
   });
@@ -174,7 +174,7 @@ test("obMarketsShow requests execution_mode=1 for orderbook market details", asy
     {
       "GET /markets/42": (url) => {
         assert.equal(url.searchParams.get("network_id"), "97");
-        assert.equal(url.searchParams.get("execution_mode"), "1");
+        assert.equal(url.searchParams.get("trading_model"), "ob");
         return createJsonResponse({
           id: 42,
           slug: "test-market",
@@ -189,6 +189,200 @@ test("obMarketsShow requests execution_mode=1 for orderbook market details", asy
       const result = await operations.obMarketsShow("42");
       assert.equal(result.id, 42);
       assert.equal(result.executionMode, 1);
+    }
+  );
+});
+
+test("obEventsList and show map event endpoints", async () => {
+  const operations = new MyriadOperations({
+    runtime: createObRuntime()
+  });
+
+  await withFetchStub(
+    {
+      "GET /events": (url) => {
+        assert.equal(url.searchParams.get("network_id"), "97");
+        assert.equal(url.searchParams.get("state"), "open");
+        return createJsonResponse({
+          data: [
+            {
+              id: "event-1",
+              networkId: 97,
+              slug: "election",
+              title: "Election",
+              state: "open",
+              negRisk: true,
+              negRiskId: "0x" + "1".repeat(64),
+              markets: []
+            }
+          ]
+        });
+      },
+      "GET /events/election": () =>
+        createJsonResponse({
+          id: "event-1",
+          networkId: 97,
+          slug: "election",
+          title: "Election",
+          state: "open",
+          negRisk: true,
+          negRiskId: "0x" + "1".repeat(64),
+          markets: []
+        })
+    },
+    async () => {
+      const list = await operations.obEventsList();
+      assert.equal(list.data[0].slug, "election");
+
+      const event = await operations.obEventsShow("election");
+      assert.equal(event.id, "event-1");
+    }
+  );
+});
+
+test("obEventOrderbook rejects non-NegRisk events", async () => {
+  const operations = new MyriadOperations({
+    runtime: createObRuntime()
+  });
+
+  await withFetchStub(
+    {
+      "GET /events/playoffs": () =>
+        createJsonResponse({
+          id: "event-2",
+          networkId: 97,
+          slug: "playoffs",
+          title: "Playoffs",
+          state: "open",
+          negRisk: false,
+          markets: []
+        })
+    },
+    async () => {
+      await assert.rejects(
+        () => operations.obEventOrderbook({ event: "playoffs" }),
+        /not a NegRisk event.*ob markets orderbook/
+      );
+    }
+  );
+});
+
+test("obEventOrderbook and actions map event queries", async () => {
+  const operations = new MyriadOperations({
+    runtime: createObRuntime()
+  });
+
+  await withFetchStub(
+    {
+      "GET /events/election": () =>
+        createJsonResponse({
+          id: "event-1",
+          networkId: 97,
+          slug: "election",
+          title: "Election",
+          state: "open",
+          negRisk: true,
+          negRiskId: "0x" + "1".repeat(64),
+          markets: []
+        }),
+      "GET /events/event-1/orderbook": () =>
+        createJsonResponse({
+          outcomes: [
+            {
+              marketId: "market-1",
+              ethMarketId: 42,
+              outcomeIndex: 0,
+              title: "Candidate A",
+              orderbook: { bids: [], asks: [] }
+            }
+          ]
+        }),
+      "GET /events/event-1/actions": (url) => {
+        assert.equal(url.searchParams.get("trading_model"), "ob");
+        assert.equal(url.searchParams.get("since"), "1700000000");
+        assert.equal(url.searchParams.get("until"), "1700000100");
+        assert.equal(url.searchParams.get("only_relevant"), "true");
+        assert.equal(url.searchParams.get("page"), "2");
+        assert.equal(url.searchParams.get("limit"), "10");
+        return createJsonResponse({
+          data: [{ action: "buy", marketTitle: "Candidate A", outcomeTitle: "Yes" }]
+        });
+      }
+    },
+    async () => {
+      const orderbook = await operations.obEventOrderbook({ event: "election" });
+      assert.equal(orderbook.eventId, "event-1");
+      assert.equal(orderbook.outcomes[0].ethMarketId, 42);
+
+      const actions = await operations.obEventActions({
+        event: "election",
+        since: 1700000000,
+        until: 1700000100,
+        onlyRelevant: true,
+        page: 2,
+        limit: 10
+      });
+      assert.equal(actions.tradingModel, "ob");
+      assert.equal(actions.data[0].action, "buy");
+    }
+  );
+});
+
+test("obPositionsNegRiskSplit dry-run resolves event id and builds approval payload", async () => {
+  const runtime = createObRuntime();
+  const operations = new MyriadOperations({ runtime });
+  const eventId = "0x" + "1".repeat(64);
+
+  await withFetchStub(
+    {
+      "GET /events/election": () =>
+        createJsonResponse({
+          id: "event-1",
+          networkId: 97,
+          slug: "election",
+          title: "Election",
+          state: "open",
+          negRisk: true,
+          negRiskId: eventId,
+          markets: [
+            {
+              id: 42,
+              title: "Candidate A",
+              outcomeIndex: 0,
+              state: "open",
+              token: {
+                address: runtime.collateralTokenAddress,
+                decimals: 18
+              }
+            }
+          ]
+        }),
+      "POST /positions/neg-risk/split": (_url, options) => {
+        const body = JSON.parse(String(options.body));
+        assert.deepEqual(body, {
+          event_id: eventId,
+          outcome_index: 0,
+          amount: utils.parseUnits("2.5", 18).toString(),
+          network_id: 97
+        });
+        return createJsonResponse({ to: "0xabc", calldata: "0x123", value: "0" });
+      }
+    },
+    async () => {
+      const result = await operations.obPositionsNegRiskSplit({
+        event: "election",
+        outcomeIndex: 0,
+        amount: "2.5",
+        dryRun: true
+      });
+
+      assert.equal(result.eventId, "event-1");
+      assert.equal(result.negRiskId, eventId);
+      assert.equal(result.outcomeIndex, 0);
+      assert.equal(result.amountRaw, utils.parseUnits("2.5", 18).toString());
+      assert.equal(result.approval.type, "erc20_allowance");
+      assert.equal(result.approval.spenderAddress, runtime.obNegRiskAdapter);
+      assert.equal(result.call.calldata, "0x123");
     }
   );
 });
@@ -1090,7 +1284,7 @@ test("obOrdersCancelAll dry-run returns a signed market-scoped cancel-all payloa
       {
         "GET /markets/42": (url) => {
           assert.equal(url.searchParams.get("network_id"), "97");
-          assert.equal(url.searchParams.get("execution_mode"), "1");
+          assert.equal(url.searchParams.get("trading_model"), "ob");
           return createJsonResponse({
             id: 42,
             slug: "test-market",

@@ -51,9 +51,11 @@ const commandCases = [
   { args: ["wallet"], commandPath: "myriad wallet", subcommands: ["setup", "deposit", "balances"] },
   { args: ["swap"], commandPath: "myriad swap", subcommands: ["stable"] },
   { args: ["trade"], commandPath: "myriad trade", subcommands: ["buy", "sell"] },
-  { args: ["ob"], commandPath: "myriad ob", subcommands: ["markets", "limit", "market", "orders", "positions"] },
+  { args: ["ob"], commandPath: "myriad ob", subcommands: ["markets", "events", "limit", "market", "orders", "positions"] },
   { args: ["ob", "markets"], commandPath: "myriad ob markets", subcommands: ["list", "show", "orderbook", "trades"] },
-  { args: ["ob", "positions"], commandPath: "myriad ob positions", subcommands: ["list", "split", "merge", "redeem"] },
+  { args: ["ob", "events"], commandPath: "myriad ob events", subcommands: ["list", "show", "orderbook", "actions"] },
+  { args: ["ob", "positions"], commandPath: "myriad ob positions", subcommands: ["list", "neg-risk", "split", "merge", "redeem"] },
+  { args: ["ob", "positions", "neg-risk"], commandPath: "myriad ob positions neg-risk", subcommands: ["split", "merge"] },
   { args: ["claim"], commandPath: "myriad claim", subcommands: ["winnings", "voided", "all"] },
   { args: ["skills"], commandPath: "myriad skills", subcommands: ["install"] }
 ];

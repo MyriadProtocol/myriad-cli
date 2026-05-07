@@ -5,6 +5,10 @@ import {
   ClobOrder,
   ClobOrderRecord,
   Market,
+  NegRiskPositionRequest,
+  OrderbookEvent,
+  OrderbookEventAction,
+  OrderbookEventOrderbookResponse,
   OrderbookResponse,
   OrderbookTrade,
   PortfolioMarketItem,
@@ -236,6 +240,55 @@ export class MyriadApiClient {
     };
   }
 
+  async listEvents(query: Record<string, string | number | boolean | undefined> = {}): Promise<ApiListResponse<OrderbookEvent>> {
+    const response = await this.request<
+      { data?: OrderbookEvent[]; pagination?: ApiListResponse<OrderbookEvent>["pagination"] } | OrderbookEvent[]
+    >("events", {
+      query
+    });
+
+    if (Array.isArray(response)) {
+      return { data: response };
+    }
+
+    return {
+      data: response.data ?? [],
+      pagination: response.pagination
+    };
+  }
+
+  async getEvent(eventId: string): Promise<OrderbookEvent> {
+    const response = await this.request<OrderbookEvent | { data: OrderbookEvent }>(`events/${eventId}`);
+    return unwrapPayload<OrderbookEvent>(response);
+  }
+
+  async getEventOrderbook(eventId: string): Promise<OrderbookEventOrderbookResponse> {
+    const response = await this.request<OrderbookEventOrderbookResponse | { data: OrderbookEventOrderbookResponse }>(
+      `events/${eventId}/orderbook`
+    );
+    return unwrapPayload<OrderbookEventOrderbookResponse>(response);
+  }
+
+  async getEventActions(
+    eventId: string,
+    query: Record<string, string | number | boolean | undefined> = {}
+  ): Promise<ApiListResponse<OrderbookEventAction>> {
+    const response = await this.request<
+      { data?: OrderbookEventAction[]; pagination?: ApiListResponse<OrderbookEventAction>["pagination"] } | OrderbookEventAction[]
+    >(`events/${eventId}/actions`, {
+      query
+    });
+
+    if (Array.isArray(response)) {
+      return { data: response };
+    }
+
+    return {
+      data: response.data ?? [],
+      pagination: response.pagination
+    };
+  }
+
   async createOrder(request: {
     order: ClobOrder;
     signature: string;
@@ -337,6 +390,28 @@ export class MyriadApiClient {
   async redeemVoidedPosition(request: { market_id: number; network_id?: number }): Promise<PositionCalldataResponse> {
     const response = await this.request<PositionCalldataResponse | { data: PositionCalldataResponse }>(
       "positions/redeem-voided",
+      {
+        method: "POST",
+        body: request
+      }
+    );
+    return unwrapPayload<PositionCalldataResponse>(response);
+  }
+
+  async splitNegRiskPosition(request: NegRiskPositionRequest): Promise<PositionCalldataResponse> {
+    const response = await this.request<PositionCalldataResponse | { data: PositionCalldataResponse }>(
+      "positions/neg-risk/split",
+      {
+        method: "POST",
+        body: request
+      }
+    );
+    return unwrapPayload<PositionCalldataResponse>(response);
+  }
+
+  async mergeNegRiskPosition(request: NegRiskPositionRequest): Promise<PositionCalldataResponse> {
+    const response = await this.request<PositionCalldataResponse | { data: PositionCalldataResponse }>(
+      "positions/neg-risk/merge",
       {
         method: "POST",
         body: request

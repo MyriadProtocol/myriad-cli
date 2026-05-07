@@ -1,6 +1,6 @@
 ---
 name: myriad-orderbook
-description: Operate Myriad's full order book workflow through `myriad ob ...`. Use when the task involves order book market discovery, orderbook or trade inspection, `--render`, limit or market orders, open-order management, bulk cancel by market, or order book position actions like list, split, merge, and redeem.
+description: Operate Myriad's full order book workflow through `myriad ob ...`. Use when the task involves order book event or market discovery, event/orderbook/trade inspection, `--render`, limit or market orders, open-order management, bulk cancel by market, or order book position actions like list, split, merge, NegRisk split/merge, and redeem.
 user-invocable: true
 metadata: {"openclaw":{"requires":{"bins":["myriad"]},"primaryEnv":"MYRIAD_API_KEY","emoji":"\uD83D\uDCD2","os":["darwin","linux","win32"]}}
 ---
@@ -9,7 +9,7 @@ metadata: {"openclaw":{"requires":{"bins":["myriad"]},"primaryEnv":"MYRIAD_API_K
 
 ## Overview
 
-Use this skill for the full `myriad ob ...` workflow: discover markets, inspect depth, place orders, manage open orders, and manage positions.
+Use this skill for the full `myriad ob ...` workflow: discover events and markets, inspect depth, place orders, manage open orders, and manage positions.
 
 Treat the order book as a production BNB Smart Chain workflow by default. Use explicit runtime overrides only when targeting a non-production deployment.
 
@@ -29,14 +29,19 @@ Before execution:
 3. Keep selectors clean.
 - Use exactly one of `--market-id` or `--market-slug`.
 - Use explicit `--outcome-id` when acting on a specific outcome.
+- For event position actions, use exactly one of `--event` or `--neg-risk-id` and set `--outcome-index`.
 
 ## Recommended Workflow
 
 1. Discover markets.
+- Start with `myriad ob events list` for grouped multi-outcome events.
+- Use `myriad ob events show` to inspect sibling markets before trading an event outcome.
 - Start with `myriad ob markets list`.
 - Use `myriad ob markets show` for final market inspection.
 
 2. Inspect liquidity before writing.
+- Use `myriad ob events orderbook --render` for NegRisk event-level depth.
+- Use `myriad ob events actions` for event-level taker trade history.
 - Use `myriad ob markets orderbook` for current depth.
 - Use `myriad ob markets orderbook --render` for a terminal ladder view.
 - Use `myriad ob markets trades` to inspect recent prints and last-price context.
@@ -55,12 +60,21 @@ Before execution:
 - `myriad ob positions list` for portfolio consultation.
 - `myriad ob positions split` for collateral -> YES + NO.
 - `myriad ob positions merge` for YES + NO -> collateral.
+- `myriad ob positions neg-risk split` and `merge` for NegRisk event outcome positions.
 - `myriad ob positions redeem` for settled outcomes.
 
 ## Command Patterns
 
 ```bash
 myriad --chain-id 56 ob markets list --state open --limit 10 --json
+```
+
+```bash
+myriad --chain-id 56 ob events list --state open --json
+```
+
+```bash
+myriad --chain-id 56 ob events orderbook 2028-election --render
 ```
 
 ```bash
@@ -85,6 +99,10 @@ myriad --chain-id 56 ob orders cancel market --market-slug will-btc-close-above-
 
 ```bash
 myriad --chain-id 56 ob orders cancel all --dry-run --json
+```
+
+```bash
+myriad --chain-id 56 ob positions neg-risk split --event 2028-election --outcome-index 0 --amount 10 --dry-run --json
 ```
 
 ## Execution Guidance
@@ -112,6 +130,8 @@ myriad --chain-id 56 ob orders cancel all --dry-run --json
   Reduce order size, switch to limit pricing, or wait for the book to refill.
 - Selector mismatch:
   Keep only one of `--market-id` or `--market-slug`.
+- Event selector mismatch:
+  Keep only one of `--event` or `--neg-risk-id`.
 
 ## Boundaries
 
